@@ -64,9 +64,9 @@ def main():
     OUTPUT_DIM = NUM_WAYPOINTS * robot['n_q']
     
     # 디버깅용 파라미터 (빠른 실행 확인용)
-    BATCH_SIZE = 10000        # (기존 32 -> 2)
+    BATCH_SIZE = 256        # (기존 32 -> 2)
     TOTAL_TIME = 1.0      # (기존 5.0 -> 1.0)
-    NUM_EPOCHS = 5000
+    NUM_EPOCHS = 15000
     
     # 2. 모델 및 물리 엔진 준비
     # MLP는 Latent Dim이 필요 없음
@@ -91,8 +91,7 @@ def main():
     for epoch in range(NUM_EPOCHS):
         # --- Training Step ---
         # random start and goal quaternion
-        q0_start = torch.randn(BATCH_SIZE, 4, device=device)
-        q0_start /= torch.norm(q0_start, dim=1, keepdim=True)
+        q0_start = torch.tensor([[0., 0., 0., 1.]], device=device).repeat(BATCH_SIZE, 1)
         q0_goal = torch.randn(BATCH_SIZE, 4, device=device)
         q0_goal /= torch.norm(q0_goal, dim=1, keepdim=True)
         
@@ -153,18 +152,18 @@ def main():
         csv_dir = os.path.join(plots_dir, "mlp_training_curve")
         if not os.path.exists(csv_dir):
             os.makedirs(csv_dir)
-        csv_path = os.path.join(csv_dir, f"{timestamp}.csv")
+        csv_path = os.path.join(csv_dir, "v1.csv")
         
         with open(csv_path, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['epoch', 'train_loss', 'epoch_duration', 'val_loss'])
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow(['epoch', 'train_loss', 'epoch_duration', 'val_loss'])
             
             # Validation loss를 딕셔너리로 변환 (빠른 조회를 위해)
             val_dict = {e: v for e, v in val_losses}
             
             for i, (epoch, train_loss, duration) in enumerate(zip(epochs, train_losses, epoch_durations)):
                 val_loss = val_dict.get(epoch, '')
-                writer.writerow([epoch, train_loss, duration, val_loss])
+                csv_writer.writerow([epoch, train_loss, duration, val_loss])
         
         print(f"Training data saved to: {csv_path}")
         
@@ -185,15 +184,15 @@ def main():
         save_dir = os.path.join(plots_dir, "mlp_training_curve")
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, f"{timestamp}.png")
+        save_path = os.path.join(save_dir, "v1.png")
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close()
     
     # 모델 저장
-    save_dir = os.path.join("weights/cvae_debug")
+    save_dir = os.path.join("weights/mlp_debug")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    save_path = os.path.join(save_dir, f"{time.time()}.pth")
+    save_path = os.path.join(save_dir, "v1.pth")
     torch.save(model.state_dict(), save_path)
     writer.close()
 
