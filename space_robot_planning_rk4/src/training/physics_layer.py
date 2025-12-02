@@ -1,21 +1,39 @@
 import os
 import sys
+import importlib.util
 
 import torch
 from torch.func import vmap
 
 # -------------------------------------------------------------------------
-# 원본 프로젝트(src)를 sys.path에 추가하여 기존 PhysicsLayer 를 재사용
+# 원본 프로젝트의 PhysicsLayer 를 파일 경로 기반으로 로드
+#  - rk4 버전의 패키지 이름(`training`)과 충돌을 피하기 위해
+#    모듈 이름이 아닌 파일 경로로 직접 import 한다.
 # -------------------------------------------------------------------------
 current_dir = os.path.dirname(os.path.abspath(__file__))    # .../space_robot_planning_rk4/src/training
 src_root = os.path.dirname(current_dir)                     # .../space_robot_planning_rk4/src
 project_root = os.path.dirname(os.path.dirname(src_root))   # .../CVAE
 
-orig_src_dir = os.path.join(project_root, "space_robot_planning", "src")
-if orig_src_dir not in sys.path:
-    sys.path.append(orig_src_dir)
+base_physics_path = os.path.join(
+    project_root,
+    "space_robot_planning",
+    "src",
+    "training",
+    "physics_layer.py",
+)
 
-from training.physics_layer import PhysicsLayer as BasePhysicsLayer  # 원본 (Euler + RK4 보조)
+
+def _load_base_physics_layer():
+    """원본 space_robot_planning PhysicsLayer 를 동적으로 로드."""
+    spec = importlib.util.spec_from_file_location("base_physics_layer", base_physics_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load base PhysicsLayer from: {base_physics_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.PhysicsLayer
+
+
+BasePhysicsLayer = _load_base_physics_layer()
 
 
 class PhysicsLayer(BasePhysicsLayer):
