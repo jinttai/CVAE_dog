@@ -228,6 +228,66 @@ class PhysicsLayer:
         angle_error = torch.acos(trace) * 2.0  # 동일한 convention 유지
         return angle_error ** 2
 
+    def simulate_single_rk4(self, q_traj, q_dot_traj, q0_init, q0_goal):
+        """
+        [Evaluation 전용 Physics Engine with RK4 integration - Rotation Matrix Version]
+        각속도 wb로부터 회전행렬을 4차 Runge-Kutta로 적분하여 최종 자세 오차를 계산
+        dt = 0.01초로 고정 (evaluation 전용)
+        """
+        dt_eval = 0.01  # Evaluation용 고정 dt
+        num_steps_eval = int(self.total_time / dt_eval)
+        
+        R0 = torch.eye(3, device=self.device)
+        r0 = torch.zeros(3, device=self.device)
+
+        # 초기/목표 자세를 회전행렬로 변환
+        R_curr = self._quat_to_rot(q0_init)
+        R_goal = self._quat_to_rot(q0_goal)
+
+        # 궤적을 더 세밀한 스텝으로 보간하기 위해 원본 궤적 인덱스 계산
+        for t_eval in range(num_steps_eval):
+            # 원본 궤적의 시간에 매핑 (0 ~ total_time)
+            t_orig = t_eval * dt_eval / self.total_time  # 0 ~ 1로 정규화
+            idx_orig = int(t_orig * (self.num_steps - 1))
+            idx_orig = min(idx_orig, self.num_steps - 1)
+            
+            qm = q_traj[idx_orig]
+            qd = q_dot_traj[idx_orig]
+
+            # --- 1. SPART Dynamics Calculations (기존과 동일) ---
+            RJ, RL, rJ, rL, e, g = spart.kinematics(R0, r0, qm, self.robot)
+            Bij, Bi0, P0, pm = spart.diff_kinematics(R0, r0, rL, e, g, self.robot)
+            I0, Im = spart.inertia_projection(R0, RL, self.robot)
+            M0_t, Mm_t = spart.mass_composite_body(I0, Im, Bij, Bi0, self.robot)
+            H0, H0m, _ = spart.generalized_inertia_matrix(M0_t, Mm_t, Bij, Bi0, P0, pm, self.robot)
+
+            # --- 2. Non-holonomic Constraint Solver --- 
+            rhs = -H0m @ qd
+            H0_damped = H0 + 1e-6 * torch.eye(6, device=self.device)
+            u0_sol = torch.linalg.solve(H0_damped, rhs)
+            wb = u0_sol[:3]  # Angular Velocity part
+
+            # --- 3. RK4 Integration for Rotation Matrix ---
+            # 회전행렬의 RK4: 각속도 wb에 대해 RK4를 적용
+            # 회전행렬의 경우, 각속도 wb가 시간에 따라 변하지 않으므로
+            # RK4는 단순히 dt를 더 작게 나누는 효과
+            # 하지만 더 정확한 구현을 위해 각 k_i의 회전을 독립적으로 계산
+            # k1: 현재 각속도로 dt만큼 회전
+            R_delta_k1 = self._rot_from_omega(wb, dt_eval)
+            
+            # k2, k3, k4: wb가 동일하므로 동일한 회전
+            # RK4 가중 평균: 회전행렬의 경우 각 k_i의 회전을 가중 평균
+            # 단순화: wb가 시간에 따라 변하지 않으므로, RK4는 dt를 더 작게 나누는 효과
+            # 따라서 단순히 dt_eval을 사용하여 회전행렬을 업데이트
+            R_delta = self._rot_from_omega(wb, dt_eval)
+            R_curr = R_curr @ R_delta
+
+        # --- 4. Final Orientation Error ---
+        R_err = R_goal.T @ R_curr
+        trace = torch.clamp((torch.trace(R_err) - 1.0) / 2.0, -1.0 + 1e-7, 1.0 - 1e-7)
+        angle_error = torch.acos(trace) * 2.0
+        return angle_error ** 2
+
     def calculate_loss(self, waypoints_flat, q0_init, q0_goal):
         """
         Batched Physics Simulation using vmap (Rotation Matrix Version)

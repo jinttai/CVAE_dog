@@ -112,7 +112,7 @@ def main():
             waypoints = cvae.decode(cond_batch, z)
             q_traj, q_dot_traj = physics.generate_trajectory(waypoints)
 
-            batch_sim_fn = torch.func.vmap(physics.simulate_single, in_dims=(0, 0, 0, 0))
+            batch_sim_fn = torch.func.vmap(physics.simulate_single_rk4, in_dims=(0, 0, 0, 0))
             errors = batch_sim_fn(q_traj, q_dot_traj, start_batch, goal_batch)
 
         errors_np = errors.cpu().numpy()
@@ -143,7 +143,7 @@ def main():
         with torch.no_grad():
             wp = mlp(condition)
             q_traj, q_dot_traj = physics.generate_trajectory(wp)
-            error = physics.simulate_single(q_traj[0], q_dot_traj[0], q0_start[0], q0_goal[0])
+            error = physics.simulate_single_rk4(q_traj[0], q_dot_traj[0], q0_start[0], q0_goal[0])
 
         err_val = error.item()
         err_deg = np.rad2deg(np.sqrt(err_val))

@@ -93,6 +93,59 @@
 5. 역전파 및 가중치 업데이트
 6. 10 epoch마다 고정 목표점에 대한 검증 및 시각화
 
+
+**적분 방법**
+- 학습/최적화: Euler 적분 (`q_{k+1} = q_k + 0.5 * q_k * wb * dt`)
+- 평가: RK4 적분 (4차 Runge-Kutta)
+
+#### 최적화 하이퍼파라미터
+
+**직접 최적화** (`optimize_direct.py`)
+- `OPTIMIZER`: Adam
+- `LEARNING_RATE`: 0.05
+- `MAX_ITERATIONS`: 200
+- `EARLY_STOP_THRESHOLD`: 1e-4
+- `INIT_STD`: 0.1 (초기 waypoint 랜덤 초기화 표준편차)
+
+**NN 기반 최적화** (`optimize_nn.py`)
+- `OPTIMIZER`: LBFGS
+- `LBFGS_LR`: 1.0
+- `LBFGS_MAX_ITER`: 20 (LBFGS 내부 반복 횟수)
+- `LBFGS_HISTORY_SIZE`: 10
+- `LBFGS_LINE_SEARCH`: "strong_wolfe"
+- `CVAE_NUM_SAMPLES`: 10 (CVAE inference 후 최적 샘플 선택)
+- `NUM_WAYPOINTS`: 3
+- `TOTAL_TIME`: 1.0초
+
+#### 평가 하이퍼파라미터 (`evaluate.py`)
+
+**CVAE 평가**
+- `NUM_SAMPLES`: 100 (평가용 샘플 수)
+- `LATENT_DIM`: 8
+- 평가 방법: RK4 적분 기반 최종 오차 계산
+
+**MLP 평가**
+- 평가 방법: Single shot (결정론적)
+- 평가 방법: RK4 적분 기반 최종 오차 계산
+
+#### 궤적 생성 파라미터
+
+**3차 스플라인**
+- 분절 수: 4 (시작점 + 중간 3개 waypoint + 끝점)
+- 각 분절당 스텝 수: `seg_steps = num_steps // num_waypoints` (약 2-3 스텝)
+- 스플라인 함수: `q(t) = q_start + (q_end - q_start) * t² * (3 - 2*t)`
+- 속도 함수: `q'(t) = (q_end - q_start) * 6*t*(1-t)`
+- 경계 조건: 각 waypoint에서 미분 = 0
+
+#### 고정 테스트 케이스
+
+**시작점**
+- `q0_start`: `[0, 0, 0, 1]` (단위 쿼터니언, 회전 없음)
+
+**목표점**
+- `q0_goal`: `[0, 0, 0.7071, 0.7071]` (Z축 기준 90도 회전)
+- 또는: `[π/100, π/100, π/100]` (Euler angles, 평가용)
+
 ### 사용 방법
 ```bash
 # CVAE 학습

@@ -191,15 +191,25 @@ class PhysicsLayer:
         """
         [Evaluation 전용 Physics Engine with RK4 integration]
         각속도 wb로부터 쿼터니언을 4차 Runge-Kutta로 적분하여 최종 자세 오차를 계산
+        dt = 0.01초로 고정 (evaluation 전용)
         """
+        dt_eval = 0.01  # Evaluation용 고정 dt
+        num_steps_eval = int(self.total_time / dt_eval)
+        
         R0 = torch.eye(3, device=self.device)
         r0 = torch.zeros(3, device=self.device)
 
         q0_curr = q0_init
 
-        for t in range(self.num_steps):
-            qm = q_traj[t]
-            qd = q_dot_traj[t]
+        # 궤적을 더 세밀한 스텝으로 보간하기 위해 원본 궤적 인덱스 계산
+        for t_eval in range(num_steps_eval):
+            # 원본 궤적의 시간에 매핑 (0 ~ total_time)
+            t_orig = t_eval * dt_eval / self.total_time  # 0 ~ 1로 정규화
+            idx_orig = int(t_orig * (self.num_steps - 1))
+            idx_orig = min(idx_orig, self.num_steps - 1)
+            
+            qm = q_traj[idx_orig]
+            qd = q_dot_traj[idx_orig]
 
             # Dynamics (wb 계산까지는 기존과 동일)
             RJ, RL, rJ, rL, e, g = spart.kinematics(R0, r0, qm, self.robot)
@@ -215,11 +225,11 @@ class PhysicsLayer:
 
             # RK4 integration for quaternion
             k1 = self._quat_deriv(q0_curr, wb)
-            k2 = self._quat_deriv(q0_curr + 0.5 * self.dt * k1, wb)
-            k3 = self._quat_deriv(q0_curr + 0.5 * self.dt * k2, wb)
-            k4 = self._quat_deriv(q0_curr + self.dt * k3, wb)
+            k2 = self._quat_deriv(q0_curr + 0.5 * dt_eval * k1, wb)
+            k3 = self._quat_deriv(q0_curr + 0.5 * dt_eval * k2, wb)
+            k4 = self._quat_deriv(q0_curr + dt_eval * k3, wb)
 
-            q0_curr = q0_curr + (self.dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+            q0_curr = q0_curr + (dt_eval / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             q0_curr = q0_curr / torch.norm(q0_curr)
 
         # 최종 각도 오차 계산 (simulate_single과 동일한 정의)
