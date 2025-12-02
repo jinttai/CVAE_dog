@@ -65,7 +65,7 @@ def main():
     robot, _ = urdf2robot("assets/SC_ur10e.urdf", verbose_flag=False, device=device)
 
     # TensorBoard Writer (Rmat 전용 로그 디렉토리)
-    writer = SummaryWriter(log_dir="runs/cvae_rmat_v1")
+    writer = SummaryWriter(log_dir="runs/cvae_rmat_v2")
 
     # ==========================================
     # [중요] 파라미터 설정 (원본과 동일)
@@ -159,7 +159,7 @@ def main():
         csv_dir = os.path.join(plots_dir, "cvae_training_curve_rmat")
         if not os.path.exists(csv_dir):
             os.makedirs(csv_dir)
-        csv_path = os.path.join(csv_dir, "v1.csv")
+        csv_path = os.path.join(csv_dir, "v2.csv")
 
         with open(csv_path, "w", newline="") as csvfile:
             csv_writer = csv.writer(csvfile)
@@ -189,7 +189,7 @@ def main():
         save_dir = os.path.join(plots_dir, "cvae_training_curve_rmat")
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, "v1.png")
+        save_path = os.path.join(save_dir, "v2.png")
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close()
 
@@ -197,7 +197,7 @@ def main():
     save_dir = os.path.join("weights", "cvae_rmat_debug")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    save_path = os.path.join(save_dir, "v1.pth")
+    save_path = os.path.join(save_dir, "v2.pth")
     torch.save(model.state_dict(), save_path)
     writer.close()
 
