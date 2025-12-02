@@ -65,7 +65,7 @@ def main():
     
     # 파라미터 (학습 코드와 일치)
     COND_DIM = 8
-    NUM_WAYPOINTS = 4
+    NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot['n_q']
     LATENT_DIM = 8
     TOTAL_TIME = 1.0 # 1초
@@ -78,7 +78,7 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # 모델 가중치 경로
-    cvae_path = "weights/cvae_debug/v1.pth"
+    cvae_path = "weights/cvae_debug/v2.pth"
     # mlp_path = "weights/mlp_debug/v1.pth"
     
     # ==========================================

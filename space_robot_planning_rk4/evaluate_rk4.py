@@ -6,19 +6,19 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 # === 경로 설정 ===
-current_dir = os.path.dirname(os.path.abspath(__file__))  # .../space_robot_planning_Rmat
+current_dir = os.path.dirname(os.path.abspath(__file__))  # .../space_robot_planning_rk4
 project_root = os.path.dirname(current_dir)               # .../CVAE
+
+rk4_src_dir = os.path.join(current_dir, "src")
+if rk4_src_dir not in sys.path:
+    sys.path.append(rk4_src_dir)
 
 orig_src_dir = os.path.join(project_root, "space_robot_planning", "src")
 if orig_src_dir not in sys.path:
     sys.path.append(orig_src_dir)
 
-rmat_src_dir = os.path.join(current_dir, "src")
-if rmat_src_dir not in sys.path:
-    sys.path.append(rmat_src_dir)
-
 from models.cvae import CVAE, MLP
-from training.physics_layer import PhysicsLayer   # Rmat 버전
+from training.physics_layer import PhysicsLayer          # RK4 래퍼
 from dynamics.urdf2robot_torch import urdf2robot
 
 
@@ -27,7 +27,6 @@ def load_model(model_class, weights_path, input_dim, output_dim, latent_dim=None
         model = CVAE(input_dim, output_dim, latent_dim).to(device)
     else:
         model = MLP(input_dim, output_dim).to(device)
-
     model.load_state_dict(torch.load(weights_path, map_location=device))
     model.eval()
     return model
@@ -58,7 +57,7 @@ def plot_best_trajectories(q_trajs, losses, title, save_path):
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"=== Evaluation (Rmat Physics) Start on {device} ===")
+    print(f"=== Evaluation (Quaternion RK4 Physics) Start on {device} ===")
 
     robot, _ = urdf2robot("assets/SC_ur10e.urdf", verbose_flag=False, device=device)
 
@@ -70,8 +69,8 @@ def main():
 
     physics = PhysicsLayer(robot, NUM_WAYPOINTS, TOTAL_TIME, device)
 
-    cvae_weights_dir = "weights/cvae_rmat_debug"
-    mlp_weights_dir = "weights/mlp_rmat_debug"
+    cvae_weights_dir = "weights/cvae_rk4_debug"
+    mlp_weights_dir = "weights/mlp_rk4_debug"
 
     def get_latest_weight(dir_path):
         if not os.path.exists(dir_path):
@@ -84,8 +83,8 @@ def main():
     cvae_path = get_latest_weight(cvae_weights_dir)
     mlp_path = get_latest_weight(mlp_weights_dir)
 
-    print(f"[Rmat] CVAE weights: {cvae_path}")
-    print(f"[Rmat] MLP  weights: {mlp_path}")
+    print(f"[RK4] CVAE weights: {cvae_path}")
+    print(f"[RK4] MLP  weights: {mlp_path}")
 
     q0_start = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device, dtype=torch.float32)
     goal_rpy = [np.pi / 100, np.pi / 100, np.pi / 100]
@@ -93,14 +92,14 @@ def main():
     q0_goal = torch.tensor(goal_quat, device=device, dtype=torch.float32)
     condition = torch.cat([q0_start, q0_goal], dim=1)
 
-    save_dir = "results_rmat/evaluation"
+    save_dir = "results_rk4/evaluation"
     os.makedirs(save_dir, exist_ok=True)
 
-    # === CVAE 평가 (Rmat PhysicsLayer) ===
+    # === CVAE 평가 (RK4 PhysicsLayer) ===
     if cvae_path:
         cvae = load_model(CVAE, cvae_path, COND_DIM, OUTPUT_DIM, LATENT_DIM, device)
 
-        print("\n--- [Rmat] CVAE Evaluation (100 Samples) ---")
+        print("\n--- [RK4] CVAE Evaluation (100 Samples) ---")
 
         num_samples = 100
         z = torch.randn(num_samples, LATENT_DIM, device=device, dtype=torch.float32)
@@ -112,7 +111,8 @@ def main():
             waypoints = cvae.decode(cond_batch, z)
             q_traj, q_dot_traj = physics.generate_trajectory(waypoints)
 
-            batch_sim_fn = torch.func.vmap(physics.simulate_single, in_dims=(0, 0, 0, 0))
+            # === 여기서는 simulate_single_rk4 가 아닌 calculate_loss (이미 RK4) 를 사용해도 됨
+            batch_sim_fn = torch.func.vmap(physics.simulate_single_rk4, in_dims=(0, 0, 0, 0))
             errors = batch_sim_fn(q_traj, q_dot_traj, start_batch, goal_batch)
 
         errors_np = errors.cpu().numpy()
@@ -131,31 +131,31 @@ def main():
         plot_best_trajectories(
             q_traj_np,
             errors_np,
-            "[Rmat] CVAE Top-3 Trajectories",
-            os.path.join(save_dir, "cvae_top3_rmat.png"),
+            "[RK4] CVAE Top-3 Trajectories",
+            os.path.join(save_dir, "cvae_top3_rk4.png"),
         )
 
-    # === MLP 평가 (Rmat PhysicsLayer) ===
+    # === MLP 평가 (RK4 PhysicsLayer) ===
     if mlp_path:
         mlp = load_model(MLP, mlp_path, COND_DIM, OUTPUT_DIM, device=device)
-        print("\n--- [Rmat] MLP Evaluation ---")
+        print("\n--- [RK4] MLP Evaluation ---")
 
         with torch.no_grad():
             wp = mlp(condition)
             q_traj, q_dot_traj = physics.generate_trajectory(wp)
-            error = physics.simulate_single(q_traj[0], q_dot_traj[0], q0_start[0], q0_goal[0])
+            error = physics.simulate_single_rk4(q_traj[0], q_dot_traj[0], q0_start[0], q0_goal[0])
 
         err_val = error.item()
         err_deg = np.rad2deg(np.sqrt(err_val))
-        print(f"[Rmat] MLP Error: {err_val:.6f} ({err_deg:.4f}°)")
+        print(f"[RK4] MLP Error: {err_val:.6f} ({err_deg:.4f}°)")
 
         plt.figure()
         plt.plot(q_traj[0].cpu().numpy()[:, 0], label="J1")
-        plt.title(f"[Rmat] MLP Trajectory (Error: {err_val:.4f})")
+        plt.title(f"[RK4] MLP Trajectory (Error: {err_val:.4f})")
         plt.legend()
         plt.grid()
-        plt.savefig(os.path.join(save_dir, "mlp_traj_rmat.png"))
-        print("[Rmat] Saved MLP plot.")
+        plt.savefig(os.path.join(save_dir, "mlp_traj_rk4.png"))
+        print("[RK4] Saved MLP plot.")
 
 
 if __name__ == "__main__":

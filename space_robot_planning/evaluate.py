@@ -63,7 +63,7 @@ def main():
     
     # 파라미터 (학습 때와 동일해야 함)
     COND_DIM = 8
-    NUM_WAYPOINTS = 4
+    NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot['n_q']
     LATENT_DIM = 8
     TOTAL_TIME = 1.0 # 학습 때 설정한 시간
@@ -83,8 +83,8 @@ def main():
         if not files: return None
         return max(files, key=os.path.getctime)
 
-    cvae_path = "weights/cvae_debug/v1.pth" # get_latest_weight(cvae_weights_dir)
-    mlp_path = "weights/mlp_debug/v1.pth" # get_latest_weight(mlp_weights_dir) 
+    cvae_path = "weights/cvae_debug/v2.pth" # get_latest_weight(cvae_weights_dir)
+    mlp_path = "weights/mlp_debug/v2.pth" # get_latest_weight(mlp_weights_dir) 
     # mlp_path = None # MLP 웨이트가 없다면 None
     
     print(f"Loading CVAE from: {cvae_path}")

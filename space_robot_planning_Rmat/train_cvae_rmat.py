@@ -71,7 +71,7 @@ def main():
     # [중요] 파라미터 설정 (원본과 동일)
     # ==========================================
     COND_DIM = 8
-    NUM_WAYPOINTS = 4
+    NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot["n_q"]
     LATENT_DIM = 8
 

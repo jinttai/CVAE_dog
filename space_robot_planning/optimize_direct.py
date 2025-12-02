@@ -49,7 +49,7 @@ def main():
     robot, _ = urdf2robot("assets/SC_ur10e.urdf", verbose_flag=False, device=device)
     
     # 파라미터
-    NUM_WAYPOINTS = 4
+    NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot['n_q']
     TOTAL_TIME = 1.0 # 학습/평가 코드와 일치시킬 것!
     

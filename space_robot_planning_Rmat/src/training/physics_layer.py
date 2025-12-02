@@ -41,44 +41,82 @@ class PhysicsLayer:
         self.num_steps = int(total_time / self.dt)
         self.device = device
 
-        # Spline Basis 미리 생성 (GPU 메모리에 상주)
-        self.basis = self._get_spline_basis(self.num_waypoints, self.num_steps).to(device)
-
     # ------------------------------------------------------------------
-    # Trajectory Generation (원본과 동일)
+    # Trajectory Generation (3차 스플라인)
     # ------------------------------------------------------------------
-    def _get_spline_basis(self, num_points, num_steps):
+    def _cubic_spline_segment(self, q_start, q_end, t_normalized):
         """
-        Linear Spline Basis Matrix 생성
+        3차 스플라인 분절: q(t) = q_start + (q_end - q_start) * t^2 * (3 - 2*t)
+        각 점에서 미분이 0이 되도록 설계됨
+        q_start, q_end: [B, n_q]
+        t_normalized: [seg_steps]
+        Returns: [B, seg_steps, n_q]
         """
-        basis = torch.zeros((num_steps, num_points + 2))
-        t = torch.linspace(0, 1, num_steps)
-        segment_len = 1.0 / (num_points + 1)
+        # 3차 Hermite basis: t^2 * (3 - 2*t)
+        basis = t_normalized * t_normalized * (3.0 - 2.0 * t_normalized)  # [seg_steps]
+        # 브로드캐스팅: [B, 1, n_q] + [B, 1, n_q] * [1, seg_steps, 1] -> [B, seg_steps, n_q]
+        q = q_start.unsqueeze(1) + (q_end.unsqueeze(1) - q_start.unsqueeze(1)) * basis.unsqueeze(0).unsqueeze(-1)
+        return q
 
-        for i in range(num_points + 2):
-            center = i * segment_len
-            dist = torch.abs(t - center)
-            val = torch.clamp(1 - dist / segment_len, 0, 1)
-            basis[:, i] = val
-        return basis
+    def _cubic_spline_derivative(self, q_start, q_end, t_normalized):
+        """
+        3차 스플라인의 미분: q'(t) = (q_end - q_start) * 6*t*(1-t)
+        q_start, q_end: [B, n_q]
+        t_normalized: [seg_steps]
+        Returns: [B, seg_steps, n_q]
+        """
+        # 미분: 6*t*(1-t)
+        d_basis = 6.0 * t_normalized * (1.0 - t_normalized)  # [seg_steps]
+        # 브로드캐스팅: [B, 1, n_q] * [1, seg_steps, 1] -> [B, seg_steps, n_q]
+        q_dot = (q_end.unsqueeze(1) - q_start.unsqueeze(1)) * d_basis.unsqueeze(0).unsqueeze(-1)
+        return q_dot
 
     def generate_trajectory(self, waypoints_flat):
         """
         [Batch, Waypoints*Joints] -> [Batch, Steps, Joints] (Pos, Vel)
+        4분절 3차 스플라인: 시작점(0) + 중간 waypoint 3개 + 끝점(0)
+        각 점에서 미분이 0
         """
         batch_size = waypoints_flat.size(0)
         w_mid = waypoints_flat.view(batch_size, self.num_waypoints, self.n_q)
 
-        # 시작점(0)과 끝점(0)은 고정 (속도 0 제약 조건을 간접적으로 부여)
+        # 시작점(0)과 끝점(0)은 고정
         zeros = torch.zeros(batch_size, 1, self.n_q, device=self.device)
-        w_full = torch.cat([zeros, w_mid, zeros], dim=1)
+        w_full = torch.cat([zeros, w_mid, zeros], dim=1)  # [B, 5, n_q]: q0, w1, w2, w3, q4
 
-        # Matrix Multiplication으로 보간 (고속)
-        q_traj = torch.einsum("st,btj->bsj", self.basis, w_full)
+        # 전체 시간을 4분절로 나눔
+        num_segments = self.num_waypoints + 1  # 4분절
+        steps_per_segment = self.num_steps // num_segments
+        remainder = self.num_steps % num_segments
 
-        # 수치 미분으로 속도 계산
-        q_dot_traj = torch.zeros_like(q_traj)
-        q_dot_traj[:, 1:, :] = (q_traj[:, 1:, :] - q_traj[:, :-1, :]) / self.dt
+        q_traj = torch.zeros(batch_size, self.num_steps, self.n_q, device=self.device)
+        q_dot_traj = torch.zeros(batch_size, self.num_steps, self.n_q, device=self.device)
+
+        step_idx = 0
+        for seg in range(num_segments):
+            q_start = w_full[:, seg, :]  # [B, n_q]
+            q_end = w_full[:, seg + 1, :]  # [B, n_q]
+
+            # 현재 분절의 스텝 수
+            seg_steps = steps_per_segment + (1 if seg < remainder else 0)
+
+            # 분절 내 정규화된 시간 [0, 1]
+            t_seg = torch.linspace(0, 1, seg_steps, device=self.device)
+
+            # 3차 스플라인으로 위치 계산: [B, seg_steps, n_q]
+            q_seg = self._cubic_spline_segment(q_start, q_end, t_seg)
+
+            # 3차 스플라인의 미분으로 속도 계산: [B, seg_steps, n_q]
+            q_dot_seg = self._cubic_spline_derivative(q_start, q_end, t_seg)
+
+            # 시간 스케일링 (전체 시간에 맞춤)
+            segment_time = (self.total_time / num_segments)
+            q_dot_seg = q_dot_seg / segment_time
+
+            q_traj[:, step_idx:step_idx + seg_steps, :] = q_seg
+            q_dot_traj[:, step_idx:step_idx + seg_steps, :] = q_dot_seg
+
+            step_idx += seg_steps
 
         return q_traj, q_dot_traj
 

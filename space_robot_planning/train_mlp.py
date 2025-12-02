@@ -60,7 +60,7 @@ def main():
     # [설정] CVAE 실험과 동일하게 유지
     # ==========================================
     COND_DIM = 8  # Start(4) + Goal(4)
-    NUM_WAYPOINTS = 4
+    NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot['n_q']
     
     # 디버깅용 파라미터 (빠른 실행 확인용)
@@ -152,7 +152,7 @@ def main():
         csv_dir = os.path.join(plots_dir, "mlp_training_curve")
         if not os.path.exists(csv_dir):
             os.makedirs(csv_dir)
-        csv_path = os.path.join(csv_dir, "v1.csv")
+        csv_path = os.path.join(csv_dir, "v2.csv")
         
         with open(csv_path, 'w', newline='') as csvfile:
             csv_writer = csv.writer(csvfile)
@@ -184,7 +184,7 @@ def main():
         save_dir = os.path.join(plots_dir, "mlp_training_curve")
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, "v1.png")
+        save_path = os.path.join(save_dir, "v2.png")
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close()
     
@@ -192,7 +192,7 @@ def main():
     save_dir = os.path.join("weights/mlp_debug")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    save_path = os.path.join(save_dir, "v1.pth")
+    save_path = os.path.join(save_dir, "v2.pth")
     torch.save(model.state_dict(), save_path)
     writer.close()
 

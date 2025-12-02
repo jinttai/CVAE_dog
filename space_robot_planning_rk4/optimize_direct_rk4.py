@@ -7,18 +7,18 @@ import time
 import numpy as np
 
 # === 경로 설정 ===
-current_dir = os.path.dirname(os.path.abspath(__file__))  # .../space_robot_planning_Rmat
+current_dir = os.path.dirname(os.path.abspath(__file__))  # .../space_robot_planning_rk4
 project_root = os.path.dirname(current_dir)               # .../CVAE
+
+rk4_src_dir = os.path.join(current_dir, "src")
+if rk4_src_dir not in sys.path:
+    sys.path.append(rk4_src_dir)
 
 orig_src_dir = os.path.join(project_root, "space_robot_planning", "src")
 if orig_src_dir not in sys.path:
     sys.path.append(orig_src_dir)
 
-rmat_src_dir = os.path.join(current_dir, "src")
-if rmat_src_dir not in sys.path:
-    sys.path.append(rmat_src_dir)
-
-from training.physics_layer import PhysicsLayer   # Rmat 버전
+from training.physics_layer import PhysicsLayer          # RK4 래퍼
 from dynamics.urdf2robot_torch import urdf2robot
 
 
@@ -49,7 +49,7 @@ def plot_trajectory(q_traj, q_dot_traj, title, save_path):
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"=== Direct Optimization (Rmat Physics) Start on {device} ===")
+    print(f"=== Direct Optimization (Quaternion RK4 Physics) Start on {device} ===")
 
     robot, _ = urdf2robot("assets/SC_ur10e.urdf", verbose_flag=False, device=device)
 
@@ -59,13 +59,13 @@ def main():
 
     physics = PhysicsLayer(robot, NUM_WAYPOINTS, TOTAL_TIME, device)
 
-    save_dir = "results_rmat/direct_opt"
+    save_dir = "results_rk4/direct_opt"
     os.makedirs(save_dir, exist_ok=True)
 
     q0_start = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device, dtype=torch.float32)
     q0_goal = torch.tensor([[0.0, 0.0, 0.7071, 0.7071]], device=device, dtype=torch.float32)
 
-    print("\n--- [Task 1] Fixed Goal Optimization (Rmat Physics) ---")
+    print("\n--- [Task 1] Fixed Goal Optimization (RK4 Physics) ---")
 
     waypoints_param = torch.zeros(1, OUTPUT_DIM, device=device)
     torch.nn.init.normal_(waypoints_param, mean=0.0, std=0.1)
@@ -91,26 +91,26 @@ def main():
         loss_history.append(loss_value)
 
         if (i + 1) <= 20 or (i + 1) % 10 == 0:
-            print(f"[Rmat] Iter [{i+1}/{iterations}] Loss: {loss_value:.6f}")
+            print(f"[RK4] Iter [{i+1}/{iterations}] Loss: {loss_value:.6f}")
 
         if loss_value < stop_threshold:
-            print(f"[Rmat] Loss {loss_value:.6f} < {stop_threshold:.6f}. Early stopping at iter {i+1}.")
+            print(f"[RK4] Loss {loss_value:.6f} < {stop_threshold:.6f}. Early stopping at iter {i+1}.")
             break
 
     end_time = time.time()
-    print(f"[Rmat] Optimization Finished. Time: {end_time - start_time:.4f}s")
+    print(f"[RK4] Optimization Finished. Time: {end_time - start_time:.4f}s")
 
     final_error = loss.item()
     final_deg = np.rad2deg(np.sqrt(final_error))
-    print(f"[Rmat] Final Error: {final_error:.6f} (approx {final_deg:.2f}°)")
+    print(f"[RK4] Final Error: {final_error:.6f} (approx {final_deg:.2f}°)")
 
     with torch.no_grad():
         q_traj, q_dot_traj = physics.generate_trajectory(waypoints_param)
         plot_trajectory(
             q_traj[0],
             q_dot_traj[0],
-            f"Direct Opt Rmat (Err: {final_error:.4f})",
-            os.path.join(save_dir, "fixed_goal_traj_rmat.png"),
+            f"Direct Opt RK4 (Err: {final_error:.4f})",
+            os.path.join(save_dir, "fixed_goal_traj_rk4.png"),
         )
 
 

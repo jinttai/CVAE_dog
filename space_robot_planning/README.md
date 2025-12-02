@@ -1,10 +1,15 @@
-v1
+# Space Robot Planning
 
-## Version 1 상세 정보
+## Version 2 (Current)
 
 ### 개요
 - **CVAE (Conditional Variational Autoencoder)** 모델과 **MLP (Baseline)** 모델을 사용한 로봇 궤적 계획 학습
 - 고정된 시작점에서 다양한 목표점으로의 궤적 생성 학습
+
+### 주요 변경사항 (v1 → v2)
+- **Trajectory 파라미터**: 5분절 → **4분절** (각 관절당 3개 파라미터)
+- **Spline Interpolation**: Linear → **3차 스플라인** (각 waypoint에서 미분=0)
+- **Evaluation**: 쿼터니언 RK4 적분 기반 최종 오차 평가
 
 ### 주요 특징
 
@@ -19,7 +24,7 @@ v1
 - **Epochs**: 15,000
 - **Latent Dimension**: 8
 - **Condition Dimension**: 8 (Start(4) + Goal(4))
-- **Waypoints**: 4
+- **Waypoints**: 3 (4분절: 시작점 + 중간 3개 + 끝점)
 - **Total Time**: 1.0초
 - **Learning Rate**: 1e-3
 - **Optimizer**: Adam
@@ -27,24 +32,32 @@ v1
 
 #### MLP 모델 설정
 - **Batch Size**: 256
-- **Epochs**: 5,000
+- **Epochs**: 15,000
 - **Condition Dimension**: 8 (Start(4) + Goal(4))
-- **Waypoints**: 4
+- **Waypoints**: 3 (4분절)
 - **Total Time**: 1.0초
 - **Learning Rate**: 1e-3
 - **Optimizer**: Adam
 - **Hidden Dimension**: 128
 
+### Trajectory Generation (v2)
+
+#### 4분절 3차 스플라인
+- **구조**: 시작점(0) + 중간 waypoint 3개 + 끝점(0) = 총 5개 점으로 4분절 구성
+- **3차 Hermite 스플라인**: 각 분절에서 `q(t) = q_start + (q_end - q_start) * t² * (3 - 2*t)`
+- **속도**: `q'(t) = (q_end - q_start) * 6*t*(1-t)`
+- **특징**: 각 waypoint에서 미분이 0이 되어 부드러운 궤적 보장
+
 ### 저장 파일
 
 #### 학습 데이터
-- **CSV 파일**: `plots/{model}_training_curve/v1.csv`
+- **CSV 파일**: `plots/{model}_training_curve/v2.csv`
   - 컬럼: `epoch`, `train_loss`, `epoch_duration`, `val_loss`
-- **플롯 이미지**: `plots/{model}_training_curve/v1.png`
+- **플롯 이미지**: `plots/{model}_training_curve/v2.png`
   - Train Loss와 Validation Loss 곡선
 - **모델 가중치**: 
-  - CVAE: `weights/cvae_debug/v1.pth`
-  - MLP: `weights/mlp_debug/v1.pth`
+  - CVAE: `weights/cvae_debug/v2.pth`
+  - MLP: `weights/mlp_debug/v2.pth`
 
 #### TensorBoard 로그
 - **CVAE**: `runs/cvae_debug_v1/`
@@ -62,6 +75,16 @@ v1
 - **입력**: Condition (Start + Goal)
 - **출력**: Waypoints (결정론적)
 
+### Physics Simulation
+
+#### 학습/최적화
+- **쿼터니언 Euler 적분**: `q_{k+1} = q_k + 0.5 * q_k * wb * dt`
+- **Non-holonomic Constraint**: SPART 동역학 기반 각속도 계산
+
+#### 평가 (Evaluation)
+- **쿼터니언 RK4 적분**: 4차 Runge-Kutta로 더 정확한 자세 추적
+- **최종 오차**: 각도 오차 `θ²` (쿼터니언 내적 기반)
+
 ### 학습 프로세스
 1. 매 epoch마다 랜덤 목표점 생성
 2. CVAE: 랜덤 샘플링된 z로 waypoints 예측
@@ -77,4 +100,27 @@ python train_cvae.py
 
 # MLP 학습
 python train_mlp.py
+
+# 평가 (RK4 기반)
+python evaluate.py
+
+# 직접 최적화
+python optimize_direct.py
+
+# CVAE warm start + LBFGS 최적화
+python optimize_nn.py
 ```
+
+---
+
+## Version 1 (Legacy)
+
+### 주요 알고리즘
+- **5분절 Linear Spline**: 시작점 + 중간 waypoint 4개 + 끝점
+- **Linear Interpolation**: 각 분절에서 선형 보간
+- **쿼터니언 Euler 적분**: 물리 시뮬레이션
+
+### 저장 파일
+- **CSV**: `plots/{model}_training_curve/v1.csv`
+- **플롯**: `plots/{model}_training_curve/v1.png`
+- **가중치**: `weights/{model}_debug/v1.pth`
