@@ -12,7 +12,7 @@ sys.path.append(os.path.join(current_dir, 'src'))
 
 from src.models.cvae import CVAE, MLP
 from src.training.physics_layer import PhysicsLayer
-from dynamics.urdf2robot_torch import urdf2robot
+from src.dynamics.urdf2robot_torch import urdf2robot
 
 def load_model(model_class, weights_path, input_dim, output_dim, latent_dim=None, device='cpu'):
     """모델 로드 헬퍼 함수"""

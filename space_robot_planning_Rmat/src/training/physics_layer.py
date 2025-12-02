@@ -14,7 +14,7 @@ if src_dir not in sys.path:
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
-import dynamics.spart_functions_torch as spart
+import src.dynamics.spart_functions_torch as spart
 from torch.func import vmap  # Auto-Batching
 
 

@@ -16,10 +16,10 @@ if root_dir not in sys.path:
 
 # dynamics 모듈 로드 (폴더 구조에 맞게 import)
 try:
-    import dynamics.spart_functions_torch as spart
+    import src.dynamics.spart_functions_torch as spart
 except ImportError:
     # 만약 src가 루트로 잡혀있는 경우 대비
-    import dynamics.spart_functions_torch as spart
+    import src.dynamics.spart_functions_torch as spart
 
 from torch.func import vmap # [핵심] 자동 배칭(Auto-Batching)
 

@@ -13,7 +13,7 @@ sys.path.append(os.path.join(current_dir, 'src'))
 from torch.utils.tensorboard import SummaryWriter
 from src.models.cvae import CVAE
 from src.training.physics_layer import PhysicsLayer
-from dynamics.urdf2robot_torch import urdf2robot
+from src.dynamics.urdf2robot_torch import urdf2robot
 
 # --- 시각화 헬퍼 함수 ---
 def plot_trajectory(q_traj, q_dot_traj, epoch):
