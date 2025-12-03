@@ -1,11 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
+
+# 출력 범위: -140도 ~ 140도 (라디안으로 변환)
+OUTPUT_MAX_DEG = 140.0
+OUTPUT_MAX_RAD = math.radians(OUTPUT_MAX_DEG)  # 약 2.4435 라디안
 
 class MLP(nn.Module):
     """
     [Baseline] Simple Deterministic Policy
     Input: Condition (Start/Goal Base Pose) -> Output: Waypoints
+    Output is limited to -140deg ~ 140deg using tanh activation
     """
     def __init__(self, input_dim, output_dim, hidden_dim=128):
         super(MLP, self).__init__()
@@ -16,11 +22,13 @@ class MLP(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
+            nn.Linear(hidden_dim, output_dim),
+            nn.Tanh()
         )
 
     def forward(self, condition):
-        return self.net(condition)
+        # tanh 출력 (-1 ~ 1)을 -140deg ~ 140deg 범위로 스케일링
+        return self.net(condition) * OUTPUT_MAX_RAD
 
 class CVAE(nn.Module):
     """
@@ -46,6 +54,7 @@ class CVAE(nn.Module):
 
         # --- Decoder (Inference / Generator) ---
         # Input: Condition + Latent z
+        # Output is limited to -140deg ~ 140deg using tanh activation
         self.decoder = nn.Sequential(
             nn.Linear(condition_dim + latent_dim, hidden_dim),
             nn.ReLU(),
@@ -53,7 +62,8 @@ class CVAE(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
+            nn.Linear(hidden_dim, output_dim),
+            nn.Tanh()
         )
 
     def encode(self, condition, trajectory):
@@ -68,7 +78,8 @@ class CVAE(nn.Module):
 
     def decode(self, condition, z):
         x = torch.cat([condition, z], dim=1)
-        return self.decoder(x)
+        # tanh 출력 (-1 ~ 1)을 -140deg ~ 140deg 범위로 스케일링
+        return self.decoder(x) * OUTPUT_MAX_RAD
 
     def forward(self, condition, trajectory):
         # Forward pass for training (reconstruction)

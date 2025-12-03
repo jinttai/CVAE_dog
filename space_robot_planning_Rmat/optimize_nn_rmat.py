@@ -48,7 +48,7 @@ def plot_trajectory(q_traj, q_dot_traj, title, save_path):
     print(f"Saved plot to {save_path}")
 
 
-def load_cvae(device, robot, weights_path="weights/cvae_debug/v1.pth"):
+def load_cvae(device, robot, weights_path="weights/cvae_debug/v2.pth"):
     COND_DIM = 8
     NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot["n_q"]
@@ -68,7 +68,7 @@ def main():
 
     # 파라미터
     cvae_model, NUM_WAYPOINTS, OUTPUT_DIM, LATENT_DIM = load_cvae(
-        device, robot, weights_path="weights/cvae_debug/v1.pth"
+        device, robot, weights_path="weights/cvae_debug/v2.pth"
     )
     TOTAL_TIME = 1.0
 
@@ -112,6 +112,7 @@ def main():
     # 2. LBFGS Refinement (Rmat PhysicsLayer 사용)
     waypoints_param = best_waypoints.detach().clone()
     waypoints_param.requires_grad = True
+    print(f"Initial waypoints: {waypoints_param}")
 
     optimizer = optim.LBFGS(
         [waypoints_param],
@@ -149,6 +150,7 @@ def main():
     print(f"Optimization Finished (Rmat LBFGS). Time: {opt_end - opt_start:.4f}s")
     print(f"[Rmat] Final Error: {final_loss:.10f} ({final_deg:.4f}°)")
     print(f"[Rmat] Iterations: {len(loss_history)}")
+    print(f"Final waypoints: {waypoints_param}")
 
     with torch.no_grad():
         q_traj, q_dot_traj = physics.generate_trajectory(waypoints_param)
