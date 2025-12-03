@@ -223,9 +223,10 @@ class PhysicsLayer:
 
         # --- 4. Final Orientation Error ---
         # 상대 회전 행렬 R_err = R_goal^T * R_curr
+        # tr(R) = 1 + 2cos(θ) 이므로, cos(θ) = (tr(R) - 1) / 2
         R_err = R_goal.T @ R_curr
         trace = torch.clamp((torch.trace(R_err) - 1.0) / 2.0, -1.0 + 1e-7, 1.0 - 1e-7)
-        angle_error = torch.acos(trace) * 2.0  # 동일한 convention 유지
+        angle_error = torch.acos(trace)  # radians (회전행렬에서는 * 2.0 불필요)
         return angle_error ** 2
 
     def simulate_single_rk4(self, q_traj, q_dot_traj, q0_init, q0_goal):
@@ -283,9 +284,10 @@ class PhysicsLayer:
             R_curr = R_curr @ R_delta
 
         # --- 4. Final Orientation Error ---
+        # tr(R) = 1 + 2cos(θ) 이므로, cos(θ) = (tr(R) - 1) / 2
         R_err = R_goal.T @ R_curr
         trace = torch.clamp((torch.trace(R_err) - 1.0) / 2.0, -1.0 + 1e-7, 1.0 - 1e-7)
-        angle_error = torch.acos(trace) * 2.0
+        angle_error = torch.acos(trace)  # radians (회전행렬에서는 * 2.0 불필요)
         return angle_error ** 2
 
     def calculate_loss(self, waypoints_flat, q0_init, q0_goal):
