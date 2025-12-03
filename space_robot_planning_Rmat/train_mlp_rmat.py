@@ -55,15 +55,15 @@ def main():
 
     robot, _ = urdf2robot("assets/SC_ur10e.urdf", verbose_flag=False, device=device)
 
-    writer = SummaryWriter(log_dir="runs/mlp_rmat_v2")
+    writer = SummaryWriter(log_dir="runs/mlp_rmat_v3")
 
     COND_DIM = 8
     NUM_WAYPOINTS = 3
     OUTPUT_DIM = NUM_WAYPOINTS * robot["n_q"]
 
-    BATCH_SIZE = 512
-    TOTAL_TIME = 1.0
-    NUM_EPOCHS = 10000
+    BATCH_SIZE = 1024
+    TOTAL_TIME = 10.0
+    NUM_EPOCHS = 2000
 
     model = MLP(COND_DIM, OUTPUT_DIM).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -155,7 +155,7 @@ def main():
         csv_dir = os.path.join(plots_dir, "mlp_training_curve_rmat")
         if not os.path.exists(csv_dir):
             os.makedirs(csv_dir)
-        csv_path = os.path.join(csv_dir, "v2.csv")
+        csv_path = os.path.join(csv_dir, "v3.csv")
 
         with open(csv_path, "w", newline="") as csvfile:
             csv_writer = csv.writer(csvfile)
@@ -185,14 +185,14 @@ def main():
         save_dir = os.path.join(plots_dir, "mlp_training_curve_rmat")
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, "v2.png")
+        save_path = os.path.join(save_dir, "v3.png")
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close()
 
     save_dir = os.path.join("weights", "mlp_rmat_debug")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    save_path = os.path.join(save_dir, "v2.pth")
+    save_path = os.path.join(save_dir, "v3.pth")
     torch.save(model.state_dict(), save_path)
     writer.close()
 
