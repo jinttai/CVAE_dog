@@ -42,6 +42,12 @@ class PhysicsLayer:
         self.num_steps = int(total_time / self.dt)
         self.device = device
 
+        # Pre-allocated constant tensors to reduce per-step allocations
+        self.R0 = torch.eye(3, device=self.device)
+        self.r0 = torch.zeros(3, device=self.device)
+        self.eye3 = torch.eye(3, device=self.device)
+        self.eye6 = torch.eye(6, device=self.device)
+
     # ------------------------------------------------------------------
     # Trajectory Generation (3차 스플라인)
     # ------------------------------------------------------------------
@@ -153,15 +159,14 @@ class PhysicsLayer:
         3D 벡터 v에 대한 skew-symmetric 행렬 [v]_x
         """
         vx, vy, vz = v
-        M = torch.tensor(
-            [
-                [0.0, -vz, vy],
-                [vz, 0.0, -vx],
-                [-vy, vx, 0.0],
-            ],
-            device=self.device,
-            dtype=v.dtype,
-        )
+        # Allocate using v's device/dtype without constructing a new Python list tensor
+        M = v.new_zeros(3, 3)
+        M[0, 1] = -vz
+        M[0, 2] = vy
+        M[1, 0] = vz
+        M[1, 2] = -vx
+        M[2, 0] = -vy
+        M[2, 1] = vx
         return M
 
     def _rot_from_omega(self, wb, dt):
@@ -173,11 +178,11 @@ class PhysicsLayer:
         if theta < 1e-8:
             # 매우 작은 회전: 1차 근사 (I + [w*dt]_x)
             K = self._skew(wb * dt)
-            return torch.eye(3, device=self.device, dtype=wb.dtype) + K
+            return self.eye3.to(dtype=wb.dtype) + K
 
         axis = wb / (torch.linalg.norm(wb) + 1e-12)
         K = self._skew(axis)
-        I = torch.eye(3, device=self.device, dtype=wb.dtype)
+        I = self.eye3.to(dtype=wb.dtype)
         R_delta = I + torch.sin(theta) * K + (1.0 - torch.cos(theta)) * (K @ K)
         return R_delta
 
@@ -193,9 +198,9 @@ class PhysicsLayer:
         - 최종 R 와 목표 쿼터니언 q0_goal 을 회전행렬로 변환한 R_goal 간의
           각도 오차를 반환 (angle_error^2)
         """
-        # 기준 좌표계
-        R0 = torch.eye(3, device=self.device)
-        r0 = torch.zeros(3, device=self.device)
+        # 기준 좌표계 (사전 생성된 텐서 사용)
+        R0 = self.R0
+        r0 = self.r0
 
         # 초기/목표 자세를 회전행렬로 변환
         R_curr = self._quat_to_rot(q0_init)
@@ -214,7 +219,7 @@ class PhysicsLayer:
 
             # --- 2. Non-holonomic Constraint Solver --- 
             rhs = -H0m @ qd
-            H0_damped = H0 + 1e-6 * torch.eye(6, device=self.device)
+            H0_damped = H0 + 1e-6 * self.eye6
             u0_sol = torch.linalg.solve(H0_damped, rhs)
             wb = u0_sol[:3]  # Angular Velocity part
 
@@ -239,8 +244,8 @@ class PhysicsLayer:
         dt_eval = 0.01  # Evaluation용 고정 dt
         num_steps_eval = int(self.total_time / dt_eval)
         
-        R0 = torch.eye(3, device=self.device)
-        r0 = torch.zeros(3, device=self.device)
+        R0 = self.R0
+        r0 = self.r0
 
         # 초기/목표 자세를 회전행렬로 변환
         R_curr = self._quat_to_rot(q0_init)
@@ -265,7 +270,7 @@ class PhysicsLayer:
 
             # --- 2. Non-holonomic Constraint Solver --- 
             rhs = -H0m @ qd
-            H0_damped = H0 + 1e-6 * torch.eye(6, device=self.device)
+            H0_damped = H0 + 1e-6 * self.eye6
             u0_sol = torch.linalg.solve(H0_damped, rhs)
             wb = u0_sol[:3]  # Angular Velocity part
 

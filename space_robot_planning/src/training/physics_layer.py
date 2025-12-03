@@ -34,6 +34,11 @@ class PhysicsLayer:
         self.num_steps = int(total_time / self.dt)
         self.device = device
 
+        # Pre-allocated constant tensors to avoid per-step allocations
+        self.R0 = torch.eye(3, device=self.device)
+        self.r0 = torch.zeros(3, device=self.device)
+        self.eye6 = torch.eye(6, device=self.device)
+
     def _cubic_spline_segment(self, q_start, q_end, t_normalized):
         """
         3차 스플라인 분절: q(t) = q_start + (q_end - q_start) * t^2 * (3 - 2*t)
@@ -115,9 +120,9 @@ class PhysicsLayer:
         [Core Physics Engine]
         단일 샘플에 대해 전체 시간을 적분합니다. (vmap에 의해 배치 병렬화됨)
         """
-        # 초기 기저 상태 (기준 좌표계)
-        R0 = torch.eye(3, device=self.device)
-        r0 = torch.zeros(3, device=self.device)
+        # 초기 기저 상태 (기준 좌표계) - 사전 생성된 텐서 사용
+        R0 = self.R0
+        r0 = self.r0
         
         q0_curr = q0_init
         
@@ -140,7 +145,7 @@ class PhysicsLayer:
             
             # [안정성 추가] H0에 Damping을 주어 역행렬 계산 시 수치적 폭발 방지
             # 학습 초기에는 H0가 특이(Singular)해질 수 있음
-            H0_damped = H0 + 1e-6 * torch.eye(6, device=self.device) 
+            H0_damped = H0 + 1e-6 * self.eye6
             
             u0_sol = torch.linalg.solve(H0_damped, rhs)
             wb = u0_sol[:3] # Angular Velocity part
@@ -197,8 +202,8 @@ class PhysicsLayer:
         dt_eval = 0.01  # Evaluation용 고정 dt
         num_steps_eval = int(self.total_time / dt_eval)
         
-        R0 = torch.eye(3, device=self.device)
-        r0 = torch.zeros(3, device=self.device)
+        R0 = self.R0
+        r0 = self.r0
 
         q0_curr = q0_init
 
@@ -220,7 +225,7 @@ class PhysicsLayer:
             H0, H0m, _ = spart.generalized_inertia_matrix(M0_t, Mm_t, Bij, Bi0, P0, pm, self.robot)
 
             rhs = -H0m @ qd
-            H0_damped = H0 + 1e-6 * torch.eye(6, device=self.device)
+            H0_damped = H0 + 1e-6 * self.eye6
             u0_sol = torch.linalg.solve(H0_damped, rhs)
             wb = u0_sol[:3]
 
