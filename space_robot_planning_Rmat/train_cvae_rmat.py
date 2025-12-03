@@ -124,7 +124,7 @@ def main():
 
     BATCH_SIZE = 512
     TOTAL_TIME = 1.0
-    NUM_EPOCHS = 15000
+    NUM_EPOCHS = 10000
 
     # 2. 모델 및 물리 엔진 준비
     model = CVAE(COND_DIM, OUTPUT_DIM, LATENT_DIM).to(device)
@@ -146,9 +146,30 @@ def main():
 
     for epoch in range(NUM_EPOCHS):
         # --- Training Step ---
+        
+        # 1. 시작 자세 (Identity Fixed)
         q0_start = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device).repeat(BATCH_SIZE, 1)
-        # Generate random quaternions from Euler angles within ±10 degrees
-        q0_goal = generate_random_quaternion_from_euler(BATCH_SIZE, max_angle_deg=10.0, device=device)
+        
+        # 2. 목표 자세 (Random Axis + Angle Limit 60 deg)
+        # (1) 랜덤 회전축 생성 (Unit Vector)
+        rand_axis = torch.randn(BATCH_SIZE, 3, device=device)
+        rand_axis = rand_axis / torch.norm(rand_axis, dim=1, keepdim=True)
+        
+        # (2) 회전 각도 생성 (0 ~ 60도)
+        # math.radians(60) = 1.0472 rad
+        max_angle = math.radians(60.0)
+        rand_theta = torch.rand(BATCH_SIZE, 1, device=device) * max_angle
+        
+        # (3) Axis-Angle -> Quaternion 변환 [x, y, z, w]
+        # q = [sin(theta/2)*ux, sin(theta/2)*uy, sin(theta/2)*uz, cos(theta/2)]
+        half_theta = rand_theta / 2.0
+        sin_half = torch.sin(half_theta)
+        cos_half = torch.cos(half_theta)
+        
+        q_xyz = rand_axis * sin_half
+        q_w = cos_half
+        
+        q0_goal = torch.cat([q_xyz, q_w], dim=1) # [B, 4]
 
         condition = torch.cat([q0_start, q0_goal], dim=1)
 
