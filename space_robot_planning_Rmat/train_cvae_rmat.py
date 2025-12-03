@@ -50,7 +50,7 @@ def euler_to_quaternion(roll, pitch, yaw):
     return torch.stack([qx, qy, qz, qw], dim=-1)
 
 
-def generate_random_quaternion_from_euler(batch_size, max_angle_deg=10.0, device='cpu'):
+def generate_random_quaternion_from_euler(batch_size, max_angle_deg=30.0, device='cpu'):
     """
     Generate random quaternions from Euler angles within specified range
     Args:
@@ -133,7 +133,8 @@ def main():
 
     # 시각화용 고정 테스트 셋
     fixed_start = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device)
-    fixed_goal = torch.tensor([[0.0, 0.0, 0.7071, 0.7071]], device=device)
+    # Generate random quaternions from Euler angles within ±10 degrees
+    fixed_goal = generate_random_quaternion_from_euler(1, max_angle_deg=10.0, device=device)
     fixed_cond = torch.cat([fixed_start, fixed_goal], dim=1)
 
     # 3. 학습 루프
