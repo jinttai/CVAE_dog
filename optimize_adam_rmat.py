@@ -7,7 +7,6 @@ import numpy as np
 import math
 
 # 프로젝트 내 모듈은 `src` 패키지를 통해 일관되게 import
-from src.models.cvae import CVAE, MLP
 from src.training.physics_layer import PhysicsLayer   # Rmat 버전
 from src.dynamics.urdf2robot_torch import urdf2robot
 import src.dynamics.spart_functions_torch as spart
@@ -33,30 +32,6 @@ def euler_to_quaternion(roll, pitch, yaw):
     qw = cr * cp * cy + sr * sp * sy
     
     return torch.stack([qx, qy, qz, qw], dim=-1)
-
-
-def generate_random_quaternion_from_euler(batch_size, max_angle_deg=30.0, device='cpu'):
-    """
-    Generate random quaternions from Euler angles within specified range
-    Args:
-        batch_size: Number of quaternions to generate
-        max_angle_deg: Maximum angle in degrees for each Euler angle (default: 10 degrees)
-        device: Device to create tensors on
-    Returns:
-        quaternions: [batch_size, 4] tensor of quaternions (x, y, z, w)
-    """
-    max_angle_rad = math.radians(max_angle_deg)
-    
-    # Generate random Euler angles in [-max_angle_deg, max_angle_deg]
-    # Using torch.rand to generate uniform distribution in [0, 1], then scale to [-max, max]
-    roll = (2 * max_angle_rad) * torch.rand(batch_size, device=device) - max_angle_rad
-    pitch = (2 * max_angle_rad) * torch.rand(batch_size, device=device) - max_angle_rad
-    yaw = (2 * max_angle_rad) * torch.rand(batch_size, device=device) - max_angle_rad
-    
-    # Convert to quaternion
-    quaternions = euler_to_quaternion(roll, pitch, yaw)
-    
-    return quaternions
 
 
 # === Orientation & Trajectory Helpers ===
@@ -220,7 +195,7 @@ def plot_trajectory(q_traj, q_dot_traj, euler_traj, title, save_path, total_time
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"=== Random Initialization + LBFGS (Rmat Physics) Start on {device} ===")
+    print(f"=== Zero Initialization + AdamW (Rmat Physics) Start on {device} ===")
 
     robot, _ = urdf2robot("assets/SC_ur10e.urdf", verbose_flag=False, device=device)
 
@@ -233,7 +208,7 @@ def main():
 
     physics = PhysicsLayer(robot, NUM_WAYPOINTS, TOTAL_TIME, device)
 
-    save_dir = "results_rmat/opt_nn_lbfgs"
+    save_dir = "results_rmat/opt_zero_adamw"
     os.makedirs(save_dir, exist_ok=True)
 
     q0_start = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device, dtype=torch.float32)
@@ -249,45 +224,53 @@ def main():
     )
     condition = torch.cat([q0_start, q0_goal], dim=1)
 
+    print("\n--- [Task 1] Fixed Goal Optimization with Zero Init (AdamW, Rmat Physics) ---")
 
-    # 1. LBFGS Refinement (zero initial guess 사용)
+    # Zero initialization (no CVAE warm start)
     waypoints_param = torch.randn(1, OUTPUT_DIM, device=device, dtype=torch.float32)
     waypoints_param.requires_grad = True
-    print(f"Initial waypoints: {waypoints_param}")
+    print(f"Initial waypoints (zero): {waypoints_param}")
+    
+    # Calculate initial loss
+    with torch.no_grad():
+        initial_loss = physics.calculate_loss(waypoints_param, q0_start, q0_goal).item()
+    print(f"Initial loss: {initial_loss:.8f}")
 
-    optimizer = optim.LBFGS(
+    # AdamW Refinement (Rmat PhysicsLayer 사용)
+    optimizer = optim.AdamW(
         [waypoints_param],
-        lr=1.0,
-        max_iter=20,
-        history_size=10,
-        line_search_fn="strong_wolfe",
+        lr=0.01,
+        weight_decay=1e-4,
     )
 
-    loss_history = []
-    iteration_count = [0]
+    loss_history = [initial_loss]
+    max_iterations = 1000
+    stop_threshold = 1e-6
 
-    def closure():
+    opt_start = time.time()
+    for iteration in range(max_iterations):
         optimizer.zero_grad()
         loss = physics.calculate_loss(waypoints_param, q0_start, q0_goal)
         loss.backward()
+        optimizer.step()
+
         loss_value = loss.item()
         loss_history.append(loss_value)
-        iteration_count[0] += 1
 
-        if iteration_count[0] <= 20 or iteration_count[0] % 10 == 0:
-            print(f"[Rmat] Iter [{iteration_count[0]}] Loss: {loss_value:.6f}")
+        if (iteration + 1) <= 20 or (iteration + 1) % 50 == 0:
+            print(f"[Rmat] Iter [{iteration+1}/{max_iterations}] Loss: {loss_value:.6f}")
 
-        return loss
+        if loss_value < stop_threshold:
+            print(f"[Rmat] Loss {loss_value:.6f} < {stop_threshold:.6f}. Early stopping at iter {iteration+1}.")
+            break
 
-    opt_start = time.time()
-    optimizer.step(closure)
     opt_end = time.time()
 
     # 결과 확인 (Euler 기반 loss, Rmat 물리)
     final_loss = physics.calculate_loss(waypoints_param, q0_start, q0_goal).item()
     final_deg = np.rad2deg(np.sqrt(final_loss)) if final_loss > 0 else 0.0
 
-    print(f"Optimization Finished (Rmat LBFGS). Time: {opt_end - opt_start:.4f}s")
+    print(f"Optimization Finished (Rmat AdamW). Time: {opt_end - opt_start:.4f}s")
     print(f"[Rmat] Final Error: {final_loss:.10f} ({final_deg:.4f}°)")
     print(f"[Rmat] Iterations: {len(loss_history)}")
     print(f"Final waypoints: {waypoints_param}")
@@ -334,8 +317,8 @@ def main():
             q_traj_single,
             q_dot_traj_single,
             euler_traj,
-            f"CVAE+LBFGS Rmat (Err: {final_loss:.6f})",
-            os.path.join(save_dir, "cvae_lbfgs_traj_rmat.png"),
+            f"Zero+AdamW Rmat (Err: {final_loss:.6f})",
+            os.path.join(save_dir, "zero_adamw_traj_rmat.png"),
             TOTAL_TIME,
             target_euler=target_euler,
         )
@@ -428,5 +411,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

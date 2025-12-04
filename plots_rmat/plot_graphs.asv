@@ -43,6 +43,16 @@ hold on;
 % (1) 전체 Loss Plot (약간 투명도를 주거나 얇게 그려 노이즈가 많아도 보기에 부담 없게)
 plot(cvae_epoch, cvae_loss, 'Color', main_color, 'LineWidth', 0.5, 'DisplayName', 'Training Loss');
 
+% (2) 평균 수렴값 표시 (수평선)
+yline(average_loss, '--', 'Color', avg_color, 'LineWidth', line_width_avg, ...
+    'DisplayName', sprintf('Converged Avg: %.4f', average_loss));
+
+% (3) 텍스트 어노테이션 (그래프 우측에 평균값 직접 표시)
+text(max(cvae_epoch), average_loss, sprintf('  Avg: %.4f', average_loss), ...
+    'VerticalAlignment', 'bottom', ...
+    'HorizontalAlignment', 'left', ... % 그래프 끝부분에 텍스트 배치
+    'FontSize', 12, 'FontWeight', 'bold', 'Color', avg_color, ...
+    'BackgroundColor', 'w', 'EdgeColor', 'none', 'Margin', 1);
 
 hold off;
 
@@ -57,3 +67,6 @@ box on;
 set(gca, 'LineWidth', line_width_axis, 'FontSize', font_size_tick, 'FontWeight', font_weight);
 xlim([min(cvae_epoch), max(cvae_epoch)]);
 
+% 범례 추가
+% (선택 사항) 결과 출력
+fprintf('Calculated Average Loss (from index %d to end): %.4f\n', idx_start, average_loss);
