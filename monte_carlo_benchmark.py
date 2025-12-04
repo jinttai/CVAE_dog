@@ -215,7 +215,8 @@ def generate_random_goal(max_angle_deg: float = 40.0, device: str = "cpu") -> to
     yaw_t = torch.tensor([yaw], device=device)
     
     q0_goal = euler_to_quaternion(roll_t, pitch_t, yaw_t)
-    return q0_goal.unsqueeze(0)  # [1, 4]
+    # euler_to_quaternion already returns [1, 4] shape, so no need for unsqueeze
+    return q0_goal  # [1, 4]
 
 
 def main():
