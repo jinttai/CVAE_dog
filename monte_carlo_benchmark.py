@@ -268,7 +268,7 @@ def main():
     
     # Monte Carlo parameters
     num_iterations = 10
-    max_angle_deg = 40.0
+    max_angle_deg = 30.0
     
     # Storage for timing results
     times_zero_lbfgs = []
@@ -284,11 +284,11 @@ def main():
             print(f"Progress: {i+1}/{num_iterations}")
         
         # 1. Random + LBFGS
-        try:
-            t = optimize_zero_lbfgs(physics, q0_start, q0_goal)
-            times_zero_lbfgs.append(t)
-        except Exception as e:
-            print(f"Error in random_lbfgs iteration {i+1}: {e}")
+        # try:
+        #     t = optimize_zero_lbfgs(physics, q0_start, q0_goal)
+        #     times_zero_lbfgs.append(t)
+        # except Exception as e:
+        #     print(f"Error in random_lbfgs iteration {i+1}: {e}")
         
         # 2. MLP + LBFGS
         if mlp_model is not None:
@@ -322,17 +322,17 @@ def main():
         
         print(f"{name:20s}: Mean = {mean_time:.6f}s, Std = {std_time:.6f}s ({len(times)}/{num_iterations} successful)")
     
-    print_stats("Random + LBFGS", times_zero_lbfgs)
+    # print_stats("Random + LBFGS", times_zero_lbfgs)
     print_stats("MLP + LBFGS", times_mlp_lbfgs)
     print_stats("CVAE + LBFGS", times_cvae_lbfgs)
     
     # Save results to file
     results = {
-        "random_lbfgs": {
-            "times": times_zero_lbfgs,
-            "mean": np.mean(times_zero_lbfgs) if times_zero_lbfgs else None,
-            "std": np.std(times_zero_lbfgs) if times_zero_lbfgs else None,
-        },
+        # "random_lbfgs": {
+        #     "times": times_zero_lbfgs,
+        #     "mean": np.mean(times_zero_lbfgs) if times_zero_lbfgs else None,
+        #     "std": np.std(times_zero_lbfgs) if times_zero_lbfgs else None,
+        # },
         "mlp_lbfgs": {
             "times": times_mlp_lbfgs,
             "mean": np.mean(times_mlp_lbfgs) if times_mlp_lbfgs else None,
