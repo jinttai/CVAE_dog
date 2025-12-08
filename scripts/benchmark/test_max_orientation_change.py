@@ -129,8 +129,43 @@ def monte_carlo_axis_analysis(physics, num_samples=1000, waypoint_range=(-3.14, 
     
     print(f"--- Monte Carlo Axis Analysis (N={num_samples}) ---")
     
-    waypoints_flat = torch.rand(num_samples, num_waypoints * n_q, device=device)
-    waypoints_flat = waypoints_flat * (waypoint_range[1] - waypoint_range[0]) + waypoint_range[0]
+    # Joint limits (radians)
+    # Hip   : -48 deg ~ 48 deg
+    # Thigh : -200 deg ~ 90 deg
+    # Calf  : -156 deg ~ -48 deg
+    deg2rad = np.pi / 180.0
+    
+    # [min, max] for each joint type
+    limit_hip   = [-48 * deg2rad, 48 * deg2rad]
+    limit_thigh = [-200 * deg2rad, 90 * deg2rad]
+    limit_calf  = [-156 * deg2rad, -48 * deg2rad]
+    
+    # q order: FR(hip, thigh, calf), FL(hip, thigh, calf), RR(hip, thigh, calf), RL(hip, thigh, calf)
+    # Total 12 joints
+    min_limits = torch.tensor([
+        limit_hip[0], limit_thigh[0], limit_calf[0],  # FR
+        limit_hip[0], limit_thigh[0], limit_calf[0],  # FL
+        limit_hip[0], limit_thigh[0], limit_calf[0],  # RR
+        limit_hip[0], limit_thigh[0], limit_calf[0]   # RL
+    ], device=device)
+    
+    max_limits = torch.tensor([
+        limit_hip[1], limit_thigh[1], limit_calf[1],  # FR
+        limit_hip[1], limit_thigh[1], limit_calf[1],  # FL
+        limit_hip[1], limit_thigh[1], limit_calf[1],  # RR
+        limit_hip[1], limit_thigh[1], limit_calf[1]   # RL
+    ], device=device)
+    
+    # Reshape for broadcasting: [1, n_q] -> [1, num_waypoints * n_q]
+    # We need to tile these limits for each waypoint
+    min_limits_tiled = min_limits.repeat(num_waypoints)
+    max_limits_tiled = max_limits.repeat(num_waypoints)
+    
+    # Random generation in [0, 1]
+    rand_samples = torch.rand(num_samples, num_waypoints * n_q, device=device)
+    
+    # Scale to [min, max]
+    waypoints_flat = rand_samples * (max_limits_tiled - min_limits_tiled) + min_limits_tiled
     
     q_traj, q_dot_traj = physics.generate_trajectory(waypoints_flat)
     
@@ -164,12 +199,13 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"=== Axis-Specific Monte Carlo Analysis on {device} ===")
     
-    robot, _ = urdf2robot(os.path.join(ROOT_DIR, "assets/SC_ur10e.urdf"), verbose_flag=False, device=device)
+    urdf_path = os.path.join(ROOT_DIR, "assets/a1_description/urdf/a1_bigfoot.urdf")
+    robot, _ = urdf2robot(urdf_path, verbose_flag=False, device=device)
     
     # 3.14 (180도)로 범위를 넓혀서 최대한의 가능성을 탐색
     physics = PhysicsLayer(robot, num_waypoints=3, total_time=10.0, device=device)
     
-    NUM_SAMPLES = 100000 
+    NUM_SAMPLES = 5000
     RANGE = (-140.0 * np.pi / 180.0, 140.0 * np.pi / 180.0)
     
     axis_angles = monte_carlo_axis_analysis(physics, NUM_SAMPLES, RANGE)
