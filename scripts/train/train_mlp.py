@@ -46,10 +46,10 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"=== MLP (Baseline) Training Start on {device} ===")
 
-    urdf_path = os.path.join(ROOT_DIR, "assets/SC_ur10e.urdf")
+    urdf_path = os.path.join(ROOT_DIR, "assets/a1_description/urdf/a1_bigfoot.urdf")
     robot, _ = urdf2robot(urdf_path, verbose_flag=False, device=device)
 
-    log_dir = os.path.join(ROOT_DIR, "outputs/logs/mlp_v3")
+    log_dir = os.path.join(ROOT_DIR, "outputs/logs/mlp_a1_bigfoot")
     writer = SummaryWriter(log_dir=log_dir)
 
     COND_DIM = 8
@@ -65,7 +65,7 @@ def main():
     physics = PhysicsLayer(robot, NUM_WAYPOINTS, TOTAL_TIME, device)
 
     fixed_start = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device)
-    fixed_goal = torch.tensor([[0.0, 0.0, 0.7071, 0.7071]], device=device)
+    fixed_goal = torch.tensor([[0.0789, 0.0941, 0.0789, 0.9893]], device=device)
     fixed_cond = torch.cat([fixed_start, fixed_goal], dim=1)
 
     total_start_time = time.time()
@@ -88,7 +88,7 @@ def main():
         
         # (2) 회전 각도 생성 (0 ~ 60도)
         # math.radians(60) = 1.0472 rad
-        max_angle = math.radians(60.0)
+        max_angle = math.radians(30.0)
         rand_theta = torch.rand(BATCH_SIZE, 1, device=device) * max_angle
         
         # (3) Axis-Angle -> Quaternion 변환 [x, y, z, w]
@@ -150,7 +150,7 @@ def main():
         csv_dir = os.path.join(plots_dir, "mlp_training_curve")
         if not os.path.exists(csv_dir):
             os.makedirs(csv_dir)
-        csv_path = os.path.join(csv_dir, "v3.csv")
+        csv_path = os.path.join(csv_dir, "a1_bigfoot.csv")
 
         with open(csv_path, "w", newline="") as csvfile:
             csv_writer = csv.writer(csvfile)
@@ -180,14 +180,14 @@ def main():
         save_dir = os.path.join(plots_dir, "mlp_training_curve")
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, "v3.png")
+        save_path = os.path.join(save_dir, "a1_bigfoot.png")
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close()
 
     save_dir = os.path.join(ROOT_DIR, "outputs/weights/mlp_debug")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    save_path = os.path.join(save_dir, "v3.pth")
+    save_path = os.path.join(save_dir, "a1_bigfoot.pth")
     torch.save(model.state_dict(), save_path)
     writer.close()
 
