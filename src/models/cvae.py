@@ -71,11 +71,18 @@ class CVAE(nn.Module):
     [Proposed] Conditional Variational Autoencoder
     Generates diverse trajectories based on condition and latent z.
     """
-    def __init__(self, condition_dim, output_dim, latent_dim=8, hidden_dim=256):
+    def __init__(self, condition_dim, output_dim, latent_dim=8, hidden_dim=256, joint_limits=None):
         super(CVAE, self).__init__()
         self.condition_dim = condition_dim
         self.output_dim = output_dim
         self.latent_dim = latent_dim
+
+        # Joint limits handling
+        if joint_limits is not None:
+            self.register_buffer('joint_limits', joint_limits)
+        else:
+            self.joint_limits = None
+
 
         # --- Encoder (Training Only) ---
         # Input: Condition + Ground Truth Trajectory
@@ -129,6 +136,26 @@ class CVAE(nn.Module):
         # Output projection with tanh
         x = self.decoder_output_proj(x)
         x = self.decoder_tanh(x)
+        
+        # Apply joint limits if available
+        if hasattr(self, 'joint_limits') and self.joint_limits is not None:
+            # joint_limits: [n_q, 2] -> [min, max]
+            n_q = self.joint_limits.size(0)
+            num_waypoints = self.output_dim // n_q
+            
+            # Repeat limits for each waypoint
+            min_lim = self.joint_limits[:, 0].repeat(num_waypoints)
+            max_lim = self.joint_limits[:, 1].repeat(num_waypoints)
+            
+            # Expand for batch size: [1, output_dim] (broadcasting handles batch dim)
+            min_lim = min_lim.unsqueeze(0)
+            max_lim = max_lim.unsqueeze(0)
+            
+            # Map -1..1 to min..max
+            scale = (max_lim - min_lim) / 2.0
+            center = (max_lim + min_lim) / 2.0
+            
+            return x * scale + center
         
         # tanh 출력 (-1 ~ 1)을 -140deg ~ 140deg 범위로 스케일링
         return x * OUTPUT_MAX_RAD
