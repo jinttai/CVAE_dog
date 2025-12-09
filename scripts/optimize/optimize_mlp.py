@@ -250,7 +250,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"=== NN-based Initialization + LBFGS Start on {device} ===")
 
-    robot, _ = urdf2robot(os.path.join(ROOT_DIR, "assets/SC_ur10e.urdf"), verbose_flag=False, device=device)
+    robot, _ = urdf2robot(os.path.join(ROOT_DIR, "assets/a1_description/urdf/a1_bigfoot.urdf"), verbose_flag=False, device=device)
 
     # 파라미터 (원본 프로젝트 구조와 동일하게 정리)
     COND_DIM = 8
@@ -282,7 +282,7 @@ def main():
     inference_start = time.time()
 
     # 학습 스크립트(train_mlp.py)에서 저장한 가중치 경로와 동일하게 맞춤
-    mlp_weights_path = os.path.join(ROOT_DIR, "outputs/weights/mlp_debug/v3.pth")
+    mlp_weights_path = os.path.join(ROOT_DIR, "outputs/weights/mlp_debug/a1_bigfoot.pth")
     mlp_model = load_model(
         mlp_weights_path,
         COND_DIM,
@@ -305,7 +305,7 @@ def main():
     print(f"\n--- Switching Refinement to {refinement_device} ---")
 
     # (A) Physics Layer 및 Robot 데이터를 CPU로 이동/재생성
-    robot_cpu, _ = urdf2robot(os.path.join(ROOT_DIR, "assets/SC_ur10e.urdf"), verbose_flag=False, device=refinement_device)
+    robot_cpu, _ = urdf2robot(os.path.join(ROOT_DIR, "assets/a1_description/urdf/a1_bigfoot.urdf"), verbose_flag=False, device=refinement_device)
     physics_cpu = PhysicsLayer(robot_cpu, NUM_WAYPOINTS, TOTAL_TIME, refinement_device)
     
     # (B) 최적화에 사용될 텐서들을 CUDA -> CPU로 이동

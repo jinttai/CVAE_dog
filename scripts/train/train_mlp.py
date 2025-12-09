@@ -58,7 +58,7 @@ def main():
 
     BATCH_SIZE = 1024
     TOTAL_TIME = 10.0
-    NUM_EPOCHS = 2000
+    NUM_EPOCHS = 500
 
     model = MLP(COND_DIM, OUTPUT_DIM).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
