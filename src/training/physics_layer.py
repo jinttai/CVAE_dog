@@ -32,6 +32,18 @@ class PhysicsLayer:
         self.r0 = torch.zeros(3, device=self.device)
         self.eye3 = torch.eye(3, device=self.device)
         self.eye6 = torch.eye(6, device=self.device)
+        self.damping_matrix = 1e-6 * self.eye6
+
+        # Pre-calculate time segments for trajectory generation
+        num_segments = self.num_waypoints + 1
+        steps_per_segment = self.num_steps // num_segments
+        remainder = self.num_steps % num_segments
+        
+        self.t_segs = []
+        for seg in range(num_segments):
+            seg_steps = steps_per_segment + (1 if seg < remainder else 0)
+            self.t_segs.append(torch.linspace(0, 1, seg_steps, device=self.device))
+
 
     # ------------------------------------------------------------------
     # Trajectory Generation (3차 스플라인)
@@ -73,27 +85,24 @@ class PhysicsLayer:
         w_mid = waypoints_flat.view(batch_size, self.num_waypoints, self.n_q)
 
         # 시작점(0)과 끝점(0)은 고정
-        zeros = torch.zeros(batch_size, 1, self.n_q, device=self.device)
+        zeros = waypoints_flat.new_zeros(batch_size, 1, self.n_q)
         w_full = torch.cat([zeros, w_mid, zeros], dim=1)  # [B, 5, n_q]: q0, w1, w2, w3, q4
 
         # 전체 시간을 4분절로 나눔
         num_segments = self.num_waypoints + 1  # 4분절
-        steps_per_segment = self.num_steps // num_segments
-        remainder = self.num_steps % num_segments
-
-        q_traj = torch.zeros(batch_size, self.num_steps, self.n_q, device=self.device)
-        q_dot_traj = torch.zeros(batch_size, self.num_steps, self.n_q, device=self.device)
+        
+        # Pre-allocate trajectory tensors
+        q_traj = waypoints_flat.new_zeros(batch_size, self.num_steps, self.n_q)
+        q_dot_traj = waypoints_flat.new_zeros(batch_size, self.num_steps, self.n_q)
 
         step_idx = 0
         for seg in range(num_segments):
             q_start = w_full[:, seg, :]  # [B, n_q]
             q_end = w_full[:, seg + 1, :]  # [B, n_q]
 
-            # 현재 분절의 스텝 수
-            seg_steps = steps_per_segment + (1 if seg < remainder else 0)
-
-            # 분절 내 정규화된 시간 [0, 1]
-            t_seg = torch.linspace(0, 1, seg_steps, device=self.device)
+            # 분절 내 정규화된 시간 [0, 1] (Pre-calculated)
+            t_seg = self.t_segs[seg]
+            seg_steps = t_seg.size(0)
 
             # 3차 스플라인으로 위치 계산: [B, seg_steps, n_q]
             q_seg = self._cubic_spline_segment(q_start, q_end, t_seg)
@@ -184,7 +193,7 @@ class PhysicsLayer:
         # 공통적으로 사용할 항들 계산
         axis = wb / (torch.linalg.norm(wb) + 1e-12)
         K = self._skew(axis)
-        I = self.eye3.to(dtype=wb.dtype)
+        I = self.eye3
 
         sin_theta = torch.sin(theta)
         cos_theta = torch.cos(theta)
@@ -295,7 +304,7 @@ class PhysicsLayer:
 
             # --- 2. Non-holonomic Constraint Solver --- 
             rhs = -H0m @ qd
-            H0_damped = H0 + 1e-6 * self.eye6
+            H0_damped = H0 + self.damping_matrix
             u0_sol = torch.linalg.solve(H0_damped, rhs)
             wb = u0_sol[:3]  # Angular Velocity part
 
@@ -368,7 +377,7 @@ class PhysicsLayer:
 
             # 4. Constraint Solver
             rhs = -H0m @ qd_sub
-            H0_damped = H0 + 1e-6 * self.eye6
+            H0_damped = H0 + self.damping_matrix
             u0_sol = torch.linalg.solve(H0_damped, rhs)
             
             return u0_sol[:3] # wb
