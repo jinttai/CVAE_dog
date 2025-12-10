@@ -362,13 +362,28 @@ def diff_kinematics(R0, r0, rL, e, g, robot):
     # rL_diff is [3, n, n] -> [x, y, z] components are [n, n] matrices
     # Skew(v) = [[0, -z, y], [z, 0, -x], [-y, x, 0]]
     
-    skew_all = torch.zeros((3, 3, n, n), device=device, dtype=dtype)
-    skew_all[0, 1] = -rL_diff[2]
-    skew_all[0, 2] = rL_diff[1]
-    skew_all[1, 0] = rL_diff[2]
-    skew_all[1, 2] = -rL_diff[0]
-    skew_all[2, 0] = -rL_diff[1]
-    skew_all[2, 1] = rL_diff[0]
+    # [Fix for vmap inplace error]
+    # Do not use inplace assignment like skew_all[0, 1] = ...
+    # Instead, construct rows and stack them.
+    
+    # Components of rL_diff
+    rx = rL_diff[0] # [n, n]
+    ry = rL_diff[1]
+    rz = rL_diff[2]
+    
+    zeros_nn = torch.zeros((n, n), device=device, dtype=dtype)
+    
+    # Row 0: [0, -rz, ry]
+    row0 = torch.stack([zeros_nn, -rz, ry], dim=0) # [3, n, n]
+    
+    # Row 1: [rz, 0, -rx]
+    row1 = torch.stack([rz, zeros_nn, -rx], dim=0) # [3, n, n]
+    
+    # Row 2: [-ry, rx, 0]
+    row2 = torch.stack([-ry, rx, zeros_nn], dim=0) # [3, n, n]
+    
+    # Stack rows -> [3, 3, n, n]
+    skew_all = torch.stack([row0, row1, row2], dim=0)
     
     # Bij block matrix construction [[I, 0], [skew, I]]
     # Expand I3 to [3, 3, n, n]
@@ -400,13 +415,23 @@ def diff_kinematics(R0, r0, rL, e, g, robot):
     r0_expand = r0.flatten().unsqueeze(1) # [3, 1]
     r0_diff = r0_expand - rL # [3, n]
     
-    skew_Bi0 = torch.zeros((3, 3, n), device=device, dtype=dtype)
-    skew_Bi0[0, 1] = -r0_diff[2]
-    skew_Bi0[0, 2] = r0_diff[1]
-    skew_Bi0[1, 0] = r0_diff[2]
-    skew_Bi0[1, 2] = -r0_diff[0]
-    skew_Bi0[2, 0] = -r0_diff[1]
-    skew_Bi0[2, 1] = r0_diff[0]
+    # [Fix for vmap inplace error]
+    rx0 = r0_diff[0] # [n]
+    ry0 = r0_diff[1]
+    rz0 = r0_diff[2]
+    
+    zeros_n_vec = torch.zeros(n, device=device, dtype=dtype)
+    
+    # Row 0: [0, -rz, ry]
+    row0_Bi0 = torch.stack([zeros_n_vec, -rz0, ry0], dim=0) # [3, n]
+    
+    # Row 1: [rz, 0, -rx]
+    row1_Bi0 = torch.stack([rz0, zeros_n_vec, -rx0], dim=0) # [3, n]
+    
+    # Row 2: [-ry, rx, 0]
+    row2_Bi0 = torch.stack([-ry0, rx0, zeros_n_vec], dim=0) # [3, n]
+    
+    skew_Bi0 = torch.stack([row0_Bi0, row1_Bi0, row2_Bi0], dim=0) # [3, 3, n]
     
     I3_n = I3.unsqueeze(-1).expand(3, 3, n)
     zeros_n = torch.zeros((3, 3, n), device=device, dtype=dtype)
@@ -425,22 +450,29 @@ def diff_kinematics(R0, r0, rL, e, g, robot):
     # A1 robot is all revolute (type 1).
     # General solution:
     
-    pm = torch.zeros((6, n), device=device, dtype=dtype)
-    
-    # Pre-fetch types to list to avoid dict lookup in loop?
-    # Or just loop, it is O(n) not O(n^2).
-    # e: [3, n], g: [3, n]
+    # [Fix for vmap inplace error]
+    # Instead of pm[:, i] = ..., use a list and stack.
     
     # Vectorized cross product
     cross_eg = torch.linalg.cross(e, g, dim=0) # [3, n]
     
+    pm_list = []
+    
     for i in range(n):
         jt = robot['joints'][i]['type']
         if jt == 1: # Revolute
-            pm[:3, i] = e[:, i]
-            pm[3:, i] = cross_eg[:, i]
+            # pm_i = [e[:, i], cross_eg[:, i]]
+            pm_i = torch.cat([e[:, i], cross_eg[:, i]], dim=0)
         elif jt == 2: # Prismatic
-            pm[3:, i] = e[:, i]
+            # pm_i = [zeros(3), e[:, i]]
+            zeros_3 = torch.zeros(3, device=device, dtype=dtype)
+            pm_i = torch.cat([zeros_3, e[:, i]], dim=0)
+        else:
+            pm_i = torch.zeros(6, device=device, dtype=dtype)
+        
+        pm_list.append(pm_i)
+    
+    pm = torch.stack(pm_list, dim=1) # [6, n]
             
     return Bij, Bi0, P0, pm
 
@@ -629,7 +661,7 @@ def generalized_inertia_matrix_old(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
 
 def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
     """
-    Vectorized generalized_inertia_matrix calculation
+    Vectorized generalized_inertia_matrix - vmap compatible
     """
     n_q = robot['n_q']
     n = robot['n_links_joints']
@@ -639,8 +671,6 @@ def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
     H0 = P0.T @ M0_tilde @ P0
     
     # Pre-compute q_id mappings for active joints
-    # active_indices: list of indices i where joint i is active
-    # q_ids: list of corresponding q_ids (0-based)
     active_indices = []
     q_ids = []
     
@@ -651,19 +681,12 @@ def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
             
     num_active = len(active_indices)
     
-    # Hm calculation
-    # Hm[qi, qj] = pm[:, i]^T * Mm_tilde[:, :, i] * Bij[:, :, i, j] * pm[:, j]
-    # for i >= j (symmetric)
-    
-    # We can compute this for all active pairs (i, j)
-    # Gather tensors for active joints
-    # pm_active: [6, num_active]
-    # Mm_tilde_active: [6, 6, num_active] (diagonal blocks for i)
-    
-    # It's hard to gather from [6,6,n] using list of indices efficiently without copy?
-    # Indexing is fine.
+    # If no active joints, return zeros
+    if num_active == 0:
+        return H0, torch.zeros((6, n_q), device=device, dtype=dtype), torch.zeros((n_q, n_q), device=device, dtype=dtype)
     
     active_idx_tensor = torch.tensor(active_indices, device=device, dtype=torch.long)
+    # q_idx_tensor not needed for loop construction, but good for reference
     
     # Gather pm columns: [6, num_active]
     pm_active = pm[:, active_idx_tensor] 
@@ -672,132 +695,78 @@ def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
     Mm_tilde_active = Mm_tilde[:, :, active_idx_tensor]
     
     # Gather Bij blocks: [6, 6, num_active, num_active]
-    # Bij is [6, 6, n, n]. We want Bij[:, :, i, j] for i,j in active_indices
-    # Meshgrid-like indexing
     grid_i, grid_j = torch.meshgrid(active_idx_tensor, active_idx_tensor, indexing='ij')
-    Bij_active = Bij[:, :, grid_i, grid_j] # [6, 6, num_active, num_active]
+    Bij_active = Bij[:, :, grid_i, grid_j]
     
-    # Term: pm_i^T * Mm_i * Bij_ij * pm_j
-    # Let's do it in steps or einsum
-    # 1. M_pm = Mm_tilde_active * pm_active -> No, dimensions don't match directly for batch matmul
-    # Mm_tilde_active is [6, 6, K], pm_active is [6, K]
-    # We want [6, K] where col k is Mm[:,:,k] @ pm[:,k]
+    # Hm calculation using einsum
+    Mm_pm = torch.einsum('mnk,nk->mk', Mm_tilde_active, pm_active)
+    Bij_pm = torch.einsum('mnij,nj->mij', Bij_active, pm_active)
+    Hm_dense = torch.einsum('mi,mij->ij', Mm_pm, Bij_pm)
     
-    # Einsum: 'mnk,nk->mk' (m=6, n=6, k=num_active)
-    Mm_pm = torch.einsum('mnk,nk->mk', Mm_tilde_active, pm_active) # [6, K]
-    
-    # 2. Bij_pm = Bij_active @ pm_active (broadcast over j?)
-    # Bij_active is [6, 6, Ki, Kj]
-    # pm_active is [6, Kj] (needs to broadcast over Ki)
-    # We want result [6, Ki, Kj]
-    # Einsum: 'mnij,nj->mij'
-    Bij_pm = torch.einsum('mnij,nj->mij', Bij_active, pm_active) # [6, Ki, Kj]
-    
-    # 3. Final dot product: Mm_pm[:, i] dot Bij_pm[:, i, j]
-    # Mm_pm is [6, Ki], Bij_pm is [6, Ki, Kj]
-    # We want [Ki, Kj]
-    # Einsum: 'mi,mij->ij'
-    Hm_dense = torch.einsum('mi,mij->ij', Mm_pm, Bij_pm) # [num_active, num_active]
-    
-    # Now scatter Hm_dense into Hm[n_q, n_q]
-    # q_ids maps 0..num_active-1 to actual q indices
-    # We can use index_put or just assignment if we construct the full matrix?
-    # If num_active == n_q (usually true unless some q don't map to joints linearly?), we can just reorder.
-    # Usually q_ids are 0..n_q-1 but maybe permuted?
-    # For serial chains, they are usually 0..n_q-1 in order.
-    # Let's use flexible scatter for safety.
-    
-    q_idx_tensor = torch.tensor(q_ids, device=device, dtype=torch.long)
-    
-    # Create grid for scatter
-    target_i, target_j = torch.meshgrid(q_idx_tensor, q_idx_tensor, indexing='ij')
-
-    # [Correction for Correctness]
-    # Hm_dense is lower triangular (because Bij[i, j] != 0 only if i >= j)
-    # We need to symmetrize it.
+    # Symmetrize
     diagonal = torch.diagonal(Hm_dense)
-    Hm_dense_sym = Hm_dense + Hm_dense.T - torch.diag_embed(diagonal)
+    Hm_dense_sym = Hm_dense + Hm_dense.T - torch.diag(diagonal)
     
-    Hm = torch.zeros((n_q, n_q), device=device, dtype=dtype)
-    Hm.index_put_((target_i, target_j), Hm_dense_sym)
+    # === vmap-compatible Hm construction ===
+    # Check if q_ids are contiguous 0..n_q-1
+    is_contiguous = (num_active == n_q)
+    if is_contiguous:
+        for i in range(num_active):
+            if q_ids[i] != i:
+                is_contiguous = False
+                break
     
-    # H0m calculation
-    # H0m[col k] = pm_k^T * Mm_k * Bi0_k * P0
-    # or transpose logic: (vec)^T.
-    # Original: vec = pm_i^T * Mm_i * Bi0_i * P0. vec is (1, 6)? 
-    # Original code: vec = pm... @ ... @ P0. shape (6,).
-    # Wait, pm is (6,), Mm (6,6), Bi0 (6,6), P0 (6,6).
-    # result is (6,).
-    # Formula: H0m column k = (P0^T * Bi0_i^T * Mm_i * pm_i)
-    # Let's check original code: vec = pm @ Mm @ Bi0 @ P0 ?? 
-    # Python @ is matmul. 
-    # pm (6,), Mm (6,6). pm @ Mm -> (6,) row vector logic? 
-    # PyTorch 1D @ 2D -> row @ mat?
-    # shape: (6,) @ (6,6) -> (6,). 
-    # So it computes v^T * M.
-    # So vec is row vector (1, 6).
-    # H0m is (6, n_q). So we need to transpose it to column?
-    # Original code: h0m_dict[qi] = vec.
-    # Then stack(cols, dim=1).
-    # If vec is (6,), stack(dim=1) makes it (6, n_q).
-    # Correct.
+    if is_contiguous:
+        # q_ids are [0, 1, 2, ..., n_q-1] in order - direct use
+        Hm = Hm_dense_sym
+    else:
+        # Need to scatter - build using loops (vmap-safe since no in-place)
+        Hm_rows = []
+        for r in range(n_q):
+            Hm_cols = []
+            for c in range(n_q):
+                # Find if (r, c) maps to any (q_ids[i], q_ids[j])
+                val = torch.zeros(1, device=device, dtype=dtype)
+                
+                # Manual search to avoid advanced indexing inside loop which might confuse vmap
+                # But since q_ids is constant per robot structure, we could optimize this outside vmap?
+                # robot struct is passed in.
+                
+                found = False
+                for i_idx, qi in enumerate(q_ids):
+                    if qi == r:
+                        for j_idx, qj in enumerate(q_ids):
+                            if qj == c:
+                                val = Hm_dense_sym[i_idx, j_idx].unsqueeze(0)
+                                found = True
+                                break
+                    if found: break
+                
+                Hm_cols.append(val)
+            Hm_rows.append(torch.cat(Hm_cols, dim=0))
+        Hm = torch.stack(Hm_rows, dim=0)
     
-    # Vectorized H0m:
-    # Gather Bi0: [6, 6, num_active]
+    # === vmap-compatible H0m construction ===
     Bi0_active = Bi0[:, :, active_idx_tensor]
+    term1 = torch.einsum('mnk,mk->nk', Bi0_active, Mm_pm)
+    H0m_dense = P0.T @ term1  # [6, num_active]
     
-    # Term: pm_i^T * Mm_i * Bi0_i
-    # We already have Mm_pm [6, K] (which is Mm * pm, effectively pm^T * Mm if symmetric?)
-    # Mm is symmetric? Yes, mass matrix.
-    # So pm^T * Mm = (Mm * pm)^T.
-    # Mm_pm is (6, K) where col k is Mm @ pm.
-    # We want (Mm @ pm)^T @ Bi0.
-    # Bi0_active is [6, 6, K].
-    # We want for each k: Mm_pm[:, k] @ Bi0_active[:, :, k]
-    # Einsum: 'mk,nmk->nk' (result 6xK)
-    # result[n, k] = sum_m (Mm_pm[m, k] * Bi0_active[n, m, k])
-    # Check dims: (6, K) and (6, 6, K).
-    # We want vector v[k] = Mm_pm[k]^T @ Bi0[k].
-    # v[k] is 1x6.
-    # So we want (6, K).
-    # result[n, k] corresponds to n-th component of vector k.
-    
-    # Logic:
-    # Mm_pm col k: u = Mm @ pm.
-    # We want u^T @ Bi0.
-    # u is (6,1). Bi0 is (6,6). result (1,6).
-    # u^T @ Bi0 = (Bi0^T @ u)^T.
-    # So we compute Bi0^T @ u.
-    # Einsum: 'nmk,mk->nk' -> sum_m (Bi0_active[n, m, k] * Mm_pm[m, k])
-    # This computes Bi0 @ u? No.
-    # 'nmk' means Bi0[n,m,k]. 'mk' means u[m,k].
-    # sum_m Bi0[n,m] * u[m] is Bi0 @ u.
-    # We want u^T @ Bi0 = (Bi0^T @ u)^T.
-    # Bi0^T[row, col] = Bi0[col, row].
-    # So we want sum_m Bi0[m, n] * u[m].
-    # Einsum: 'mnk,mk->nk'
-    # sum_m Bi0[m, n, k] * Mm_pm[m, k]
-    
-    term1 = torch.einsum('mnk,mk->nk', Bi0_active, Mm_pm) # [6, K]
-    
-    # Multiply by P0
-    # term1 is (6, K). P0 is (6, 6).
-    # We want vec * P0. vec is row.
-    # (vec * P0)^T = P0^T * vec^T.
-    # vec^T is col of term1.
-    # So we want P0^T @ term1.
-    
-    # wait, original code: vec = ... @ P0.
-    # vec (row) @ P0 (mat) -> row.
-    # We want columns.
-    # So we want (vec @ P0)^T = P0^T @ vec^T.
-    # vec^T is term1.
-    
-    H0m_dense = P0.T @ term1 # [6, K]
-    
-    # Scatter to H0m
-    H0m = torch.zeros((6, n_q), device=device, dtype=dtype)
-    H0m[:, q_idx_tensor] = H0m_dense
+    if is_contiguous:
+        # Direct use
+        H0m = H0m_dense
+    else:
+        # Build column by column
+        H0m_cols = []
+        for c in range(n_q):
+            found = False
+            for i_idx, qi in enumerate(q_ids):
+                if qi == c:
+                    H0m_cols.append(H0m_dense[:, i_idx])
+                    found = True
+                    break
+            if not found:
+                H0m_cols.append(torch.zeros(6, device=device, dtype=dtype))
+        H0m = torch.stack(H0m_cols, dim=1)
     
     return H0, H0m, Hm
 
