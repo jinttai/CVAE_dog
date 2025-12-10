@@ -330,76 +330,118 @@ def kinematics(R0, r0, qm, robot):
     return RJ, RL, rJ, rL, e, g
 
 def diff_kinematics(R0, r0, rL, e, g, robot):
+    """
+    Vectorized diff_kinematics - O(n^2) loop removed
+    """
     n = robot['n_links_joints']
     device = R0.device
     dtype = R0.dtype
     
-    # Bij = torch.zeros((6, 6, n, n), device=device, dtype=dtype)
-    # Bi0 = torch.zeros((6, 6, n), device=device, dtype=dtype)
-    # pm = torch.zeros((6, n), device=device, dtype=dtype)
-    
-    Bij_list = [[None for _ in range(n)] for _ in range(n)]
-    Bi0_list = []
-    pm_list = []
-    
-    # P0 block [[R0, 0], [0, I]]
+    # 1. P0 (unchanged)
     zeros_33 = torch.zeros((3, 3), device=device, dtype=dtype)
     I3 = torch.eye(3, device=device, dtype=dtype)
     P0 = torch.cat([
         torch.cat([R0, zeros_33], dim=1),
         torch.cat([zeros_33, I3], dim=1)
     ], dim=0)
-
-    I6 = torch.eye(6, device=device, dtype=dtype)
-
+    
+    # 2. Vectorized Bij calculation
+    # rL: [3, n] -> rL_diff[k, i, j] = rL[k, j] - rL[k, i]
+    # We want skew(rL[:, j] - rL[:, i]) for Bij[i][j]
+    
+    rL_j = rL.unsqueeze(2)  # [3, n, 1] -> rL[:, i] when broadcasted at index i
+    rL_i = rL.unsqueeze(1)  # [3, 1, n] -> rL[:, j] when broadcasted at index j
+    
+    # rL_diff[k, i, j] should be rL[k, j] - rL[k, i]
+    # rL_i broadcasts to [3, n, n] such that at (i, j) it gives rL[:, j]
+    # rL_j broadcasts to [3, n, n] such that at (i, j) it gives rL[:, i]
+    
+    rL_diff = rL_i - rL_j   # [3, n, n] (j - i)
+    
+    # Skew symmetric for all pairs
+    # rL_diff is [3, n, n] -> [x, y, z] components are [n, n] matrices
+    # Skew(v) = [[0, -z, y], [z, 0, -x], [-y, x, 0]]
+    
+    skew_all = torch.zeros((3, 3, n, n), device=device, dtype=dtype)
+    skew_all[0, 1] = -rL_diff[2]
+    skew_all[0, 2] = rL_diff[1]
+    skew_all[1, 0] = rL_diff[2]
+    skew_all[1, 2] = -rL_diff[0]
+    skew_all[2, 0] = -rL_diff[1]
+    skew_all[2, 1] = rL_diff[0]
+    
+    # Bij block matrix construction [[I, 0], [skew, I]]
+    # Expand I3 to [3, 3, n, n]
+    I3_expand = I3.unsqueeze(-1).unsqueeze(-1).expand(3, 3, n, n)
+    zeros_expand = torch.zeros((3, 3, n, n), device=device, dtype=dtype)
+    
+    # Bij = torch.zeros((6, 6, n, n), device=device, dtype=dtype)
+    # Using slice assignment might be faster or cat
+    # Bij[:3, :3] = I3_expand
+    # Bij[:3, 3:] = zeros_expand
+    # Bij[3:, :3] = skew_all
+    # Bij[3:, 3:] = I3_expand
+    
+    # Concatenation approach
+    # Row 1: [I3, 0]
+    row1 = torch.cat([I3_expand, zeros_expand], dim=1) # [3, 6, n, n]
+    # Row 2: [skew, I3]
+    row2 = torch.cat([skew_all, I3_expand], dim=1) # [3, 6, n, n]
+    Bij = torch.cat([row1, row2], dim=0) # [6, 6, n, n]
+    
+    # Apply branch mask
+    # robot['con']['branch'] is [n, n]
+    branch_mask = robot['con']['branch'].to(dtype=dtype)
+    # Broadcast: [1, 1, n, n] * [n, n]
+    Bij = Bij * branch_mask.unsqueeze(0).unsqueeze(0)
+    
+    # 3. Vectorized Bi0 calculation
+    # r0_diff = r0 - rL_i => r0 [3] - rL [3, n]
+    r0_expand = r0.flatten().unsqueeze(1) # [3, 1]
+    r0_diff = r0_expand - rL # [3, n]
+    
+    skew_Bi0 = torch.zeros((3, 3, n), device=device, dtype=dtype)
+    skew_Bi0[0, 1] = -r0_diff[2]
+    skew_Bi0[0, 2] = r0_diff[1]
+    skew_Bi0[1, 0] = r0_diff[2]
+    skew_Bi0[1, 2] = -r0_diff[0]
+    skew_Bi0[2, 0] = -r0_diff[1]
+    skew_Bi0[2, 1] = r0_diff[0]
+    
+    I3_n = I3.unsqueeze(-1).expand(3, 3, n)
+    zeros_n = torch.zeros((3, 3, n), device=device, dtype=dtype)
+    
+    # Bi0 = [[I, 0], [skew, I]]
+    Bi0_row1 = torch.cat([I3_n, zeros_n], dim=1) # [3, 6, n]
+    Bi0_row2 = torch.cat([skew_Bi0, I3_n], dim=1) # [3, 6, n]
+    Bi0 = torch.cat([Bi0_row1, Bi0_row2], dim=0) # [6, 6, n]
+    
+    # 4. pm calculation
+    # Vectorized approach hard because of conditional logic based on joint type?
+    # Joint types are in a list, not tensor. But we can iterate or mask.
+    # n is usually small (e.g., 12-20). Loop might be fine, but we can vectorize if we gather types.
+    
+    # Since n is small, let's keep loop for pm or use simple masking if all revolute.
+    # A1 robot is all revolute (type 1).
+    # General solution:
+    
+    pm = torch.zeros((6, n), device=device, dtype=dtype)
+    
+    # Pre-fetch types to list to avoid dict lookup in loop?
+    # Or just loop, it is O(n) not O(n^2).
+    # e: [3, n], g: [3, n]
+    
+    # Vectorized cross product
+    cross_eg = torch.linalg.cross(e, g, dim=0) # [3, n]
+    
     for i in range(n):
-        for j in range(n):
-            if robot['con']['branch'][i, j] == 1:
-                # Bij block [[I, 0], [skew(...), I]]
-                skew_val = skew_symmetric(rL[:, j] - rL[:, i])
-                Bij_val = torch.cat([
-                    torch.cat([I3, zeros_33], dim=1),
-                    torch.cat([skew_val, I3], dim=1)
-                ], dim=0)
-                Bij_list[i][j] = Bij_val
-            else:
-                Bij_list[i][j] = torch.zeros((6, 6), device=device, dtype=dtype)
-                
-        # Bi0 block [[I, 0], [skew(...), I]]
-        skew_val_0 = skew_symmetric(r0.flatten() - rL[:, i].flatten())
-        Bi0_val = torch.cat([
-            torch.cat([I3, zeros_33], dim=1),
-            torch.cat([skew_val_0, I3], dim=1)
-        ], dim=0)
-        Bi0_list.append(Bi0_val)
-        
-        if robot['joints'][i]['type'] == 1:
-            # pm[:, i] = [e; cross(e, g)]
-            # e[:, i] is (3,)
-            # cross is (3,)
-            pm_val = torch.cat([e[:, i], torch.linalg.cross(e[:, i], g[:, i])], dim=0)
-        elif robot['joints'][i]['type'] == 2:
-            # pm[:, i] = [0; e]
-            zeros_3 = torch.zeros(3, device=device, dtype=dtype)
-            pm_val = torch.cat([zeros_3, e[:, i]], dim=0)
-        else:
-            pm_val = torch.zeros(6, device=device, dtype=dtype)
-        pm_list.append(pm_val)
+        jt = robot['joints'][i]['type']
+        if jt == 1: # Revolute
+            pm[:3, i] = e[:, i]
+            pm[3:, i] = cross_eg[:, i]
+        elif jt == 2: # Prismatic
+            pm[3:, i] = e[:, i]
             
-    # Stack
-    # Bij: list of lists -> tensor (6, 6, n, n)
-    # Inner lists are rows (i), outer stack dim=2?
-    # Bij[i][j] corresponds to Bij[:,:,i,j]
-    # Stack inner (j) -> (6,6,n) per i. Stack outer (i) -> (6,6,n,n).
-    
-    # Stack along j (last dim)
-    Bij_rows = [torch.stack(row, dim=2) for row in Bij_list]
-    # Stack along i (second to last dim)
-    Bij = torch.stack(Bij_rows, dim=2)
-    
-    Bi0 = torch.stack(Bi0_list, dim=2)
-    pm = torch.stack(pm_list, dim=1)
-    
     return Bij, Bi0, P0, pm
 
 def velocities(Bij, Bi0, P0, pm, u0, um, robot):
@@ -503,7 +545,7 @@ def mass_composite_body(I0, Im, Bij, Bi0, robot):
         
     return M0_tilde, Mm_tilde
 
-def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
+def generalized_inertia_matrix_old(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
     n_q = robot['n_q']
     n = robot['n_links_joints']
     device = M0_tilde.device
@@ -583,6 +625,180 @@ def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
     else:
         H0m = torch.zeros((6, n_q), device=device, dtype=dtype)
         
+    return H0, H0m, Hm
+
+def generalized_inertia_matrix(M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
+    """
+    Vectorized generalized_inertia_matrix calculation
+    """
+    n_q = robot['n_q']
+    n = robot['n_links_joints']
+    device = M0_tilde.device
+    dtype = M0_tilde.dtype
+    
+    H0 = P0.T @ M0_tilde @ P0
+    
+    # Pre-compute q_id mappings for active joints
+    # active_indices: list of indices i where joint i is active
+    # q_ids: list of corresponding q_ids (0-based)
+    active_indices = []
+    q_ids = []
+    
+    for i in range(n):
+        if robot['joints'][i]['type'] != 0:
+            active_indices.append(i)
+            q_ids.append(robot['joints'][i]['q_id'] - 1)
+            
+    num_active = len(active_indices)
+    
+    # Hm calculation
+    # Hm[qi, qj] = pm[:, i]^T * Mm_tilde[:, :, i] * Bij[:, :, i, j] * pm[:, j]
+    # for i >= j (symmetric)
+    
+    # We can compute this for all active pairs (i, j)
+    # Gather tensors for active joints
+    # pm_active: [6, num_active]
+    # Mm_tilde_active: [6, 6, num_active] (diagonal blocks for i)
+    
+    # It's hard to gather from [6,6,n] using list of indices efficiently without copy?
+    # Indexing is fine.
+    
+    active_idx_tensor = torch.tensor(active_indices, device=device, dtype=torch.long)
+    
+    # Gather pm columns: [6, num_active]
+    pm_active = pm[:, active_idx_tensor] 
+    
+    # Gather Mm_tilde blocks: [6, 6, num_active]
+    Mm_tilde_active = Mm_tilde[:, :, active_idx_tensor]
+    
+    # Gather Bij blocks: [6, 6, num_active, num_active]
+    # Bij is [6, 6, n, n]. We want Bij[:, :, i, j] for i,j in active_indices
+    # Meshgrid-like indexing
+    grid_i, grid_j = torch.meshgrid(active_idx_tensor, active_idx_tensor, indexing='ij')
+    Bij_active = Bij[:, :, grid_i, grid_j] # [6, 6, num_active, num_active]
+    
+    # Term: pm_i^T * Mm_i * Bij_ij * pm_j
+    # Let's do it in steps or einsum
+    # 1. M_pm = Mm_tilde_active * pm_active -> No, dimensions don't match directly for batch matmul
+    # Mm_tilde_active is [6, 6, K], pm_active is [6, K]
+    # We want [6, K] where col k is Mm[:,:,k] @ pm[:,k]
+    
+    # Einsum: 'mnk,nk->mk' (m=6, n=6, k=num_active)
+    Mm_pm = torch.einsum('mnk,nk->mk', Mm_tilde_active, pm_active) # [6, K]
+    
+    # 2. Bij_pm = Bij_active @ pm_active (broadcast over j?)
+    # Bij_active is [6, 6, Ki, Kj]
+    # pm_active is [6, Kj] (needs to broadcast over Ki)
+    # We want result [6, Ki, Kj]
+    # Einsum: 'mnij,nj->mij'
+    Bij_pm = torch.einsum('mnij,nj->mij', Bij_active, pm_active) # [6, Ki, Kj]
+    
+    # 3. Final dot product: Mm_pm[:, i] dot Bij_pm[:, i, j]
+    # Mm_pm is [6, Ki], Bij_pm is [6, Ki, Kj]
+    # We want [Ki, Kj]
+    # Einsum: 'mi,mij->ij'
+    Hm_dense = torch.einsum('mi,mij->ij', Mm_pm, Bij_pm) # [num_active, num_active]
+    
+    # Now scatter Hm_dense into Hm[n_q, n_q]
+    # q_ids maps 0..num_active-1 to actual q indices
+    # We can use index_put or just assignment if we construct the full matrix?
+    # If num_active == n_q (usually true unless some q don't map to joints linearly?), we can just reorder.
+    # Usually q_ids are 0..n_q-1 but maybe permuted?
+    # For serial chains, they are usually 0..n_q-1 in order.
+    # Let's use flexible scatter for safety.
+    
+    q_idx_tensor = torch.tensor(q_ids, device=device, dtype=torch.long)
+    
+    # Create grid for scatter
+    target_i, target_j = torch.meshgrid(q_idx_tensor, q_idx_tensor, indexing='ij')
+
+    # [Correction for Correctness]
+    # Hm_dense is lower triangular (because Bij[i, j] != 0 only if i >= j)
+    # We need to symmetrize it.
+    diagonal = torch.diagonal(Hm_dense)
+    Hm_dense_sym = Hm_dense + Hm_dense.T - torch.diag_embed(diagonal)
+    
+    Hm = torch.zeros((n_q, n_q), device=device, dtype=dtype)
+    Hm.index_put_((target_i, target_j), Hm_dense_sym)
+    
+    # H0m calculation
+    # H0m[col k] = pm_k^T * Mm_k * Bi0_k * P0
+    # or transpose logic: (vec)^T.
+    # Original: vec = pm_i^T * Mm_i * Bi0_i * P0. vec is (1, 6)? 
+    # Original code: vec = pm... @ ... @ P0. shape (6,).
+    # Wait, pm is (6,), Mm (6,6), Bi0 (6,6), P0 (6,6).
+    # result is (6,).
+    # Formula: H0m column k = (P0^T * Bi0_i^T * Mm_i * pm_i)
+    # Let's check original code: vec = pm @ Mm @ Bi0 @ P0 ?? 
+    # Python @ is matmul. 
+    # pm (6,), Mm (6,6). pm @ Mm -> (6,) row vector logic? 
+    # PyTorch 1D @ 2D -> row @ mat?
+    # shape: (6,) @ (6,6) -> (6,). 
+    # So it computes v^T * M.
+    # So vec is row vector (1, 6).
+    # H0m is (6, n_q). So we need to transpose it to column?
+    # Original code: h0m_dict[qi] = vec.
+    # Then stack(cols, dim=1).
+    # If vec is (6,), stack(dim=1) makes it (6, n_q).
+    # Correct.
+    
+    # Vectorized H0m:
+    # Gather Bi0: [6, 6, num_active]
+    Bi0_active = Bi0[:, :, active_idx_tensor]
+    
+    # Term: pm_i^T * Mm_i * Bi0_i
+    # We already have Mm_pm [6, K] (which is Mm * pm, effectively pm^T * Mm if symmetric?)
+    # Mm is symmetric? Yes, mass matrix.
+    # So pm^T * Mm = (Mm * pm)^T.
+    # Mm_pm is (6, K) where col k is Mm @ pm.
+    # We want (Mm @ pm)^T @ Bi0.
+    # Bi0_active is [6, 6, K].
+    # We want for each k: Mm_pm[:, k] @ Bi0_active[:, :, k]
+    # Einsum: 'mk,nmk->nk' (result 6xK)
+    # result[n, k] = sum_m (Mm_pm[m, k] * Bi0_active[n, m, k])
+    # Check dims: (6, K) and (6, 6, K).
+    # We want vector v[k] = Mm_pm[k]^T @ Bi0[k].
+    # v[k] is 1x6.
+    # So we want (6, K).
+    # result[n, k] corresponds to n-th component of vector k.
+    
+    # Logic:
+    # Mm_pm col k: u = Mm @ pm.
+    # We want u^T @ Bi0.
+    # u is (6,1). Bi0 is (6,6). result (1,6).
+    # u^T @ Bi0 = (Bi0^T @ u)^T.
+    # So we compute Bi0^T @ u.
+    # Einsum: 'nmk,mk->nk' -> sum_m (Bi0_active[n, m, k] * Mm_pm[m, k])
+    # This computes Bi0 @ u? No.
+    # 'nmk' means Bi0[n,m,k]. 'mk' means u[m,k].
+    # sum_m Bi0[n,m] * u[m] is Bi0 @ u.
+    # We want u^T @ Bi0 = (Bi0^T @ u)^T.
+    # Bi0^T[row, col] = Bi0[col, row].
+    # So we want sum_m Bi0[m, n] * u[m].
+    # Einsum: 'mnk,mk->nk'
+    # sum_m Bi0[m, n, k] * Mm_pm[m, k]
+    
+    term1 = torch.einsum('mnk,mk->nk', Bi0_active, Mm_pm) # [6, K]
+    
+    # Multiply by P0
+    # term1 is (6, K). P0 is (6, 6).
+    # We want vec * P0. vec is row.
+    # (vec * P0)^T = P0^T * vec^T.
+    # vec^T is col of term1.
+    # So we want P0^T @ term1.
+    
+    # wait, original code: vec = ... @ P0.
+    # vec (row) @ P0 (mat) -> row.
+    # We want columns.
+    # So we want (vec @ P0)^T = P0^T @ vec^T.
+    # vec^T is term1.
+    
+    H0m_dense = P0.T @ term1 # [6, K]
+    
+    # Scatter to H0m
+    H0m = torch.zeros((6, n_q), device=device, dtype=dtype)
+    H0m[:, q_idx_tensor] = H0m_dense
+    
     return H0, H0m, Hm
 
 def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, pm, robot):
